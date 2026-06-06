@@ -21,10 +21,33 @@
             <button class="period-button is-active" data-period="month" type="button">Month</button>
             <button class="period-button" data-period="year" type="button">Year</button>
           </div>
-          <label class="month-picker">
-            <span>Month/Year</span>
-            <input id="monthFilter" type="month" />
-          </label>
+          <div class="month-picker" aria-label="Month and year">
+            <button id="prevMonthBtn" class="icon-button" type="button" title="Previous month">&lt;</button>
+            <label>
+              <span>Month</span>
+              <select id="monthSelect">
+                <option value="0">January</option>
+                <option value="1">February</option>
+                <option value="2">March</option>
+                <option value="3">April</option>
+                <option value="4">May</option>
+                <option value="5">June</option>
+                <option value="6">July</option>
+                <option value="7">August</option>
+                <option value="8">September</option>
+                <option value="9">October</option>
+                <option value="10">November</option>
+                <option value="11">December</option>
+              </select>
+            </label>
+            <label class="year-field">
+              <span>Year</span>
+              <input id="yearInput" type="number" min="1900" max="2200" step="1" />
+            </label>
+            <button id="nextMonthBtn" class="icon-button" type="button" title="Next month">&gt;</button>
+            <button id="todayMonthBtn" class="ghost-button" type="button">Today</button>
+            <input id="monthFilter" class="sr-only" type="month" />
+          </div>
           <button id="addTransactionBtn" class="primary-button" type="button">+ Add Transaction</button>
           <button id="undoBtn" class="icon-button" type="button">Undo</button>
           <button id="redoBtn" class="icon-button" type="button">Redo</button>
@@ -305,6 +328,7 @@
                 <span id="userCount" class="quiet-pill">0 users</span>
               </div>
               <form id="userForm" class="form-grid">
+                <input id="userId" type="hidden" />
                 <label class="wide">
                   <span>Name</span>
                   <input id="userName" type="text" maxlength="50" required />
@@ -313,7 +337,12 @@
                   <span>Email / Login</span>
                   <input id="userEmail" type="email" maxlength="80" placeholder="Optional" />
                 </label>
-                <button class="primary-button wide" type="submit">Add User</button>
+                <div class="form-actions wide">
+                  <button class="primary-button" type="submit">
+                    <span id="userSubmitLabel">Add User</span>
+                  </button>
+                  <button id="resetUserForm" class="ghost-button" type="button">Clear</button>
+                </div>
               </form>
               <div id="userList" class="user-list"></div>
             </section>
@@ -324,11 +353,21 @@
                 <span id="bookCount" class="quiet-pill">0 books</span>
               </div>
               <form id="bookForm" class="form-grid">
+                <input id="bookId" type="hidden" />
                 <label class="wide">
                   <span>Book Name</span>
                   <input id="bookName" type="text" maxlength="60" required />
                 </label>
-                <button class="primary-button wide" type="submit">Add Book</button>
+                <label class="wide">
+                  <span>Owner</span>
+                  <select id="bookOwner"></select>
+                </label>
+                <div class="form-actions wide">
+                  <button class="primary-button" type="submit">
+                    <span id="bookSubmitLabel">Add Book</span>
+                  </button>
+                  <button id="resetBookForm" class="ghost-button" type="button">Clear</button>
+                </div>
               </form>
               <form id="shareForm" class="form-grid">
                 <label>
@@ -337,6 +376,7 @@
                 </label>
                 <button class="ghost-button" type="submit">Share Ledger</button>
               </form>
+              <div id="shareList" class="share-list"></div>
               <div id="bookList" class="book-list"></div>
             </section>
           </div>

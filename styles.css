@@ -182,6 +182,25 @@ h2 {
   color: var(--muted);
   font-size: 0.9rem;
   font-weight: 700;
+  flex-wrap: wrap;
+}
+
+.month-picker label {
+  display: grid;
+  gap: 4px;
+}
+
+.month-picker label span {
+  margin: 0;
+  font-size: 0.68rem;
+}
+
+.month-picker select {
+  min-width: 132px;
+}
+
+.month-picker .year-field {
+  width: 92px;
 }
 
 input,
@@ -401,6 +420,12 @@ textarea:focus {
   gap: 12px;
 }
 
+.form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 label span {
   display: block;
   margin-bottom: 6px;
@@ -482,6 +507,7 @@ label span {
 .review-list,
 .user-list,
 .book-list,
+.share-list,
 .split-list {
   display: grid;
   gap: 10px;
@@ -518,6 +544,31 @@ label span {
 .user-details strong {
   overflow-wrap: anywhere;
   font-size: 1.15rem;
+}
+
+.share-summary {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.share-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.share-chip span {
+  font-weight: 850;
+  overflow-wrap: anywhere;
 }
 
 .progress-item,
@@ -810,8 +861,18 @@ th {
   }
 
   .topbar-actions > *,
-  .compact-controls > * {
+  .compact-controls > *,
+  .month-picker > * {
     flex: 1 1 140px;
+  }
+
+  .month-picker {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .month-picker .year-field {
+    width: auto;
   }
 
   .bar-chart {

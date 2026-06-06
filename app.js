@@ -15,6 +15,11 @@ const els = {
   activeBookSelect: document.querySelector("#activeBookSelect"),
   periodButtons: document.querySelectorAll(".period-button"),
   monthFilter: document.querySelector("#monthFilter"),
+  monthSelect: document.querySelector("#monthSelect"),
+  yearInput: document.querySelector("#yearInput"),
+  prevMonthBtn: document.querySelector("#prevMonthBtn"),
+  nextMonthBtn: document.querySelector("#nextMonthBtn"),
+  todayMonthBtn: document.querySelector("#todayMonthBtn"),
   addTransactionBtn: document.querySelector("#addTransactionBtn"),
   transactionAddBtn: document.querySelector("#transactionAddBtn"),
   undoBtn: document.querySelector("#undoBtn"),
@@ -70,16 +75,24 @@ const els = {
   accountSummary: document.querySelector("#accountSummary"),
   accountList: document.querySelector("#accountList"),
   userForm: document.querySelector("#userForm"),
+  userId: document.querySelector("#userId"),
   userName: document.querySelector("#userName"),
   userEmail: document.querySelector("#userEmail"),
+  userSubmitLabel: document.querySelector("#userSubmitLabel"),
+  resetUserForm: document.querySelector("#resetUserForm"),
   userCount: document.querySelector("#userCount"),
   userList: document.querySelector("#userList"),
   bookForm: document.querySelector("#bookForm"),
+  bookId: document.querySelector("#bookId"),
   bookName: document.querySelector("#bookName"),
+  bookOwner: document.querySelector("#bookOwner"),
+  bookSubmitLabel: document.querySelector("#bookSubmitLabel"),
+  resetBookForm: document.querySelector("#resetBookForm"),
   bookCount: document.querySelector("#bookCount"),
   bookList: document.querySelector("#bookList"),
   shareForm: document.querySelector("#shareForm"),
   shareUserSelect: document.querySelector("#shareUserSelect"),
+  shareList: document.querySelector("#shareList"),
   themeSelect: document.querySelector("#themeSelect"),
   exportCsvBtn: document.querySelector("#exportCsvBtn"),
   exportWorkbookBtn: document.querySelector("#exportWorkbookBtn"),
@@ -113,12 +126,14 @@ init();
 
 function init() {
   document.body.dataset.theme = state.theme || "classic";
-  els.monthFilter.value = state.currentMonth || currentMonth;
+  syncMonthControls(state.currentMonth || currentMonth);
   els.themeSelect.value = state.theme || "classic";
   setPeriodMode(state.periodMode || "month", false);
   resetQuickForm();
   resetBudgetForm();
   resetAccountForm();
+  resetUserForm();
+  resetBookForm();
   resetTransactionForm();
   bindEvents();
   ensureActiveBookAccess();
@@ -140,11 +155,12 @@ function bindEvents() {
   els.periodButtons.forEach((button) => {
     button.addEventListener("click", () => setPeriodMode(button.dataset.period));
   });
-  els.monthFilter.addEventListener("change", () => {
-    state.currentMonth = els.monthFilter.value || currentMonth;
-    saveState();
-    render();
-  });
+  els.monthSelect.addEventListener("change", updateMonthFromControls);
+  els.yearInput.addEventListener("change", updateMonthFromControls);
+  els.prevMonthBtn.addEventListener("click", () => shiftMonth(-1));
+  els.nextMonthBtn.addEventListener("click", () => shiftMonth(1));
+  els.todayMonthBtn.addEventListener("click", () => setCurrentMonth(currentMonth));
+  els.monthFilter.addEventListener("change", () => setCurrentMonth(els.monthFilter.value || currentMonth));
   els.tabs.forEach((tab) => {
     tab.addEventListener("click", () => setTab(tab.dataset.tab));
   });
@@ -165,8 +181,10 @@ function bindEvents() {
   els.accountType.addEventListener("change", autofillBalanceFromValueOwed);
   els.accountValue.addEventListener("input", autofillBalanceFromValueOwed);
   els.accountOwed.addEventListener("input", autofillBalanceFromValueOwed);
-  els.userForm.addEventListener("submit", addUser);
-  els.bookForm.addEventListener("submit", addBook);
+  els.userForm.addEventListener("submit", saveUser);
+  els.resetUserForm.addEventListener("click", resetUserForm);
+  els.bookForm.addEventListener("submit", saveBook);
+  els.resetBookForm.addEventListener("click", resetBookForm);
   els.shareForm.addEventListener("submit", shareCurrentBook);
   els.themeSelect.addEventListener("change", changeTheme);
   els.exportCsvBtn.addEventListener("click", exportCsv);
@@ -406,6 +424,33 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function syncMonthControls(value) {
+  const safeValue = /^\d{4}-\d{2}$/.test(value) ? value : currentMonth;
+  const [year, month] = safeValue.split("-").map(Number);
+  state.currentMonth = safeValue;
+  els.monthFilter.value = safeValue;
+  els.monthSelect.value = String(month - 1);
+  els.yearInput.value = String(year);
+}
+
+function setCurrentMonth(value) {
+  syncMonthControls(value);
+  saveState();
+  render();
+}
+
+function updateMonthFromControls() {
+  const year = Math.min(2200, Math.max(1900, Number(els.yearInput.value) || Number(currentMonth.slice(0, 4))));
+  const month = Number(els.monthSelect.value) + 1;
+  setCurrentMonth(`${year}-${String(month).padStart(2, "0")}`);
+}
+
+function shiftMonth(delta) {
+  const [year, month] = (state.currentMonth || currentMonth).split("-").map(Number);
+  const next = new Date(year, month - 1 + delta, 1, 12);
+  setCurrentMonth(toDateInput(next).slice(0, 7));
+}
+
 function snapshotState() {
   return JSON.stringify(state);
 }
@@ -413,7 +458,7 @@ function snapshotState() {
 function restoreSnapshot(snapshot) {
   state = normalizeState(JSON.parse(snapshot));
   document.body.dataset.theme = state.theme;
-  els.monthFilter.value = state.currentMonth || currentMonth;
+  syncMonthControls(state.currentMonth || currentMonth);
   els.themeSelect.value = state.theme || "classic";
   setPeriodMode(state.periodMode, false);
   saveState();
@@ -649,13 +694,24 @@ function renderAccounts() {
 }
 
 function renderSettings() {
+  const userOptions = state.users
+    .map((user) => `<option value="${user.id}">${escapeHtml(user.name)}</option>`)
+    .join("");
+  els.bookOwner.innerHTML = userOptions;
+  if ([...els.bookOwner.options].some((option) => option.value === state.activeUserId)) {
+    els.bookOwner.value = state.activeUserId;
+  }
+
   els.userCount.textContent = `${state.users.length} user${state.users.length === 1 ? "" : "s"}`;
   els.userList.innerHTML = state.users
     .map((user) => `
       <article class="user-item">
         <div class="item-row">
           <div><div class="item-title">${escapeHtml(user.name)}</div><div class="item-meta">${escapeHtml(user.email || "No email")}${user.demo ? " / demo" : ""}</div></div>
-          <button class="row-button danger" type="button" onclick="deleteUser('${user.id}')">Delete</button>
+          <div class="actions">
+            <button class="row-button" type="button" onclick="editUser('${user.id}')">Edit</button>
+            <button class="row-button danger" type="button" onclick="deleteUser('${user.id}')">Delete</button>
+          </div>
         </div>
       </article>
     `)
@@ -669,16 +725,47 @@ function renderSettings() {
         <article class="book-item">
           <div class="item-row">
             <div><div class="item-title">${escapeHtml(book.name)}</div><div class="item-meta">Owner: ${escapeHtml(owner?.name || "Unknown")}${shared.length ? ` / Shared with ${escapeHtml(shared.join(", "))}` : ""}${book.demo ? " / demo" : ""}</div></div>
-            <button class="row-button danger" type="button" onclick="deleteBook('${book.id}')">Delete</button>
+            <div class="actions">
+              <button class="row-button" type="button" onclick="editBook('${book.id}')">Edit</button>
+              <button class="row-button danger" type="button" onclick="deleteBook('${book.id}')">Delete</button>
+            </div>
           </div>
         </article>
       `;
     })
     .join("");
+  const book = currentBook();
+  const owner = state.users.find((user) => user.id === book.ownerUserId);
+  const sharedUsers = book.sharedUserIds
+    .map((id) => state.users.find((user) => user.id === id))
+    .filter(Boolean);
   els.shareUserSelect.innerHTML = state.users
     .filter((user) => user.id !== currentBook().ownerUserId && !currentBook().sharedUserIds.includes(user.id))
     .map((user) => `<option value="${user.id}">${escapeHtml(user.name)}</option>`)
     .join("");
+  els.shareForm.querySelector("button").disabled = !els.shareUserSelect.options.length;
+  els.shareList.innerHTML = `
+    <div class="share-summary">
+      <div>
+        <div class="item-title">${escapeHtml(book.name)}</div>
+        <div class="item-meta">Owner: ${escapeHtml(owner?.name || "Unknown")}</div>
+      </div>
+      ${
+        sharedUsers.length
+          ? sharedUsers
+              .map(
+                (user) => `
+                  <div class="share-chip">
+                    <span>${escapeHtml(user.name)}</span>
+                    <button class="row-button danger" type="button" onclick="unshareBook('${book.id}', '${user.id}')">Remove</button>
+                  </div>
+                `,
+              )
+              .join("")
+          : `<div class="item-meta">Not shared yet.</div>`
+      }
+    </div>
+  `;
 }
 
 function renderCategoryOptions() {
@@ -983,20 +1070,47 @@ function resetAccountForm() {
   els.accountSubmitLabel.textContent = "Save Account";
 }
 
-function addUser(event) {
+function resetUserForm() {
+  els.userId.value = "";
+  els.userName.value = "";
+  els.userEmail.value = "";
+  els.userSubmitLabel.textContent = "Add User";
+}
+
+function saveUser(event) {
   event.preventDefault();
   const name = els.userName.value.trim();
   if (!name) return;
   recordHistory();
-  const user = { id: id(), name, email: els.userEmail.value.trim(), demo: false };
-  state.users.push(user);
-  const book = { id: id(), name: `${name}'s Budget`, ownerUserId: user.id, sharedUserIds: [], demo: false };
-  state.books.push(book);
-  state.ledgers[book.id] = createLedger();
-  els.userForm.reset();
+  const existingIndex = state.users.findIndex((user) => user.id === els.userId.value);
+  if (existingIndex >= 0) {
+    state.users[existingIndex] = {
+      ...state.users[existingIndex],
+      name,
+      email: els.userEmail.value.trim(),
+    };
+  } else {
+    const user = { id: id(), name, email: els.userEmail.value.trim(), demo: false };
+    state.users.push(user);
+    const book = { id: id(), name: `${name}'s Budget`, ownerUserId: user.id, sharedUserIds: [], demo: false };
+    state.books.push(book);
+    state.ledgers[book.id] = createLedger();
+  }
+  resetUserForm();
   saveState();
   render();
-  notify("User added with a separate budget book.");
+  notify(existingIndex >= 0 ? "User updated." : "User added with a separate budget book.");
+}
+
+function editUser(idValue) {
+  const user = state.users.find((item) => item.id === idValue);
+  if (!user) return;
+  els.userId.value = user.id;
+  els.userName.value = user.name;
+  els.userEmail.value = user.email || "";
+  els.userSubmitLabel.textContent = "Update User";
+  setTab("settings");
+  els.userName.focus();
 }
 
 function deleteUser(idValue) {
@@ -1012,23 +1126,55 @@ function deleteUser(idValue) {
   ownedBookIds.forEach((bookId) => delete state.ledgers[bookId]);
   state.activeUserId = state.users[0].id;
   ensureActiveBookAccess();
+  resetUserForm();
+  resetBookForm();
   saveState();
   render();
 }
 
-function addBook(event) {
+function resetBookForm() {
+  els.bookId.value = "";
+  els.bookName.value = "";
+  els.bookOwner.value = state.activeUserId;
+  els.bookSubmitLabel.textContent = "Add Book";
+}
+
+function saveBook(event) {
   event.preventDefault();
   const name = els.bookName.value.trim();
   if (!name) return;
   recordHistory();
-  const book = { id: id(), name, ownerUserId: state.activeUserId, sharedUserIds: [], demo: false };
-  state.books.push(book);
-  state.ledgers[book.id] = createLedger();
-  state.activeBookId = book.id;
-  els.bookForm.reset();
+  const ownerUserId = els.bookOwner.value || state.activeUserId;
+  const existingIndex = state.books.findIndex((book) => book.id === els.bookId.value);
+  if (existingIndex >= 0) {
+    const book = state.books[existingIndex];
+    state.books[existingIndex] = {
+      ...book,
+      name,
+      ownerUserId,
+      sharedUserIds: book.sharedUserIds.filter((userId) => userId !== ownerUserId),
+    };
+  } else {
+    const book = { id: id(), name, ownerUserId, sharedUserIds: [], demo: false };
+    state.books.push(book);
+    state.ledgers[book.id] = createLedger();
+    state.activeBookId = book.id;
+  }
+  resetBookForm();
   saveState();
   render();
-  notify("Book added.");
+  notify(existingIndex >= 0 ? "Book updated." : "Book added.");
+}
+
+function editBook(idValue) {
+  const book = state.books.find((item) => item.id === idValue);
+  if (!book) return;
+  els.bookId.value = book.id;
+  els.bookName.value = book.name;
+  els.bookOwner.value = book.ownerUserId;
+  els.bookSubmitLabel.textContent = "Update Book";
+  setTab("settings");
+  els.bookName.focus();
 }
 
 function deleteBook(idValue) {
@@ -1039,6 +1185,7 @@ function deleteBook(idValue) {
   state.books = state.books.filter((item) => item.id !== idValue);
   delete state.ledgers[idValue];
   ensureActiveBookAccess();
+  resetBookForm();
   saveState();
   render();
 }
@@ -1053,6 +1200,18 @@ function shareCurrentBook(event) {
   saveState();
   render();
   notify("Ledger shared.");
+}
+
+function unshareBook(bookId, userId) {
+  const book = state.books.find((item) => item.id === bookId);
+  const user = state.users.find((item) => item.id === userId);
+  if (!book || !user) return;
+  recordHistory();
+  book.sharedUserIds = book.sharedUserIds.filter((idValue) => idValue !== userId);
+  ensureActiveBookAccess();
+  saveState();
+  render();
+  notify(`Removed ${user.name} from ${book.name}.`);
 }
 
 function changeTheme() {
@@ -1342,5 +1501,8 @@ window.editBudget = editBudget;
 window.deleteBudget = deleteBudget;
 window.editAccount = editAccount;
 window.deleteAccount = deleteAccount;
+window.editUser = editUser;
 window.deleteUser = deleteUser;
+window.editBook = editBook;
 window.deleteBook = deleteBook;
+window.unshareBook = unshareBook;

@@ -8,6 +8,7 @@ const { exec } = require("node:child_process");
 const root = __dirname;
 const configPath = path.join(root, "budget-app.config.json");
 const authConfigPath = path.join(root, "auth.config.local.json");
+const dataPath = process.env.DATA_PATH || path.join(root, "budget-ledger-data.json");
 const defaultConfig = {
   port: 4173,
   host: "127.0.0.1",
@@ -33,6 +34,7 @@ const sessionTtlMs = 1000 * 60 * 60 * 12;
 const sessionCookie = "budget_session";
 const maxLoginBody = 10_000;
 const maxExportBody = 20_000_000;
+const maxStateBody = 20_000_000;
 
 function readConfig() {
   try {
@@ -236,8 +238,8 @@ function acceptsHtml(req) {
   return String(req.headers.accept || "").includes("text/html");
 }
 
-function readBody(req) {
-  return readLimitedBody(req, maxLoginBody);
+function readBody(req, limit = maxLoginBody) {
+  return readLimitedBody(req, limit);
 }
 
 function readExportBody(req) {
@@ -360,6 +362,31 @@ async function handleBackupZip(req, res) {
   }
 }
 
+async function handleGetState(req, res) {
+  try {
+    if (!fs.existsSync(dataPath)) {
+      sendJson(req, res, 200, { ok: true, state: null });
+      return;
+    }
+    const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+    sendJson(req, res, 200, { ok: true, state });
+  } catch {
+    sendJson(req, res, 500, { ok: false, message: "Saved state could not be read." });
+  }
+}
+
+async function handlePutState(req, res) {
+  try {
+    const raw = await readBody(req, maxStateBody);
+    const state = JSON.parse(raw || "{}");
+    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+    fs.writeFileSync(dataPath, JSON.stringify(state, null, 2));
+    sendJson(req, res, 200, { ok: true });
+  } catch {
+    sendJson(req, res, 400, { ok: false, message: "Saved state could not be written." });
+  }
+}
+
 function scheduleCleanup(paths) {
   setTimeout(() => {
     for (const target of paths) {
@@ -472,6 +499,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (auth && (pathname === "/login" || pathname === "/login.html") && session) {
+    redirect(req, res, "/");
+    return;
+  }
+
+  if (auth && !session && !publicPaths.has(pathname)) {
+    if (pathname.startsWith("/api/")) {
+      sendJson(req, res, 401, { ok: false, message: "Authentication required." });
+    } else if (acceptsHtml(req) || req.method === "GET") {
+      redirect(req, res, "/login");
+    } else {
+      send(req, res, 401, "Authentication required.");
+    }
+    return;
+  }
+
+  if (pathname === "/api/state" && req.method === "GET") {
+    await handleGetState(req, res);
+    return;
+  }
+
+  if (pathname === "/api/state" && req.method === "PUT") {
+    await handlePutState(req, res);
+    return;
+  }
+
   if (pathname === "/api/export-workbook" && req.method === "POST") {
     await handleWorkbookExport(req, res);
     return;
@@ -484,20 +537,6 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith("/api/")) {
     sendJson(req, res, 404, { ok: false, message: "Not found." });
-    return;
-  }
-
-  if (auth && (pathname === "/login" || pathname === "/login.html") && session) {
-    redirect(req, res, "/");
-    return;
-  }
-
-  if (auth && !session && !publicPaths.has(pathname)) {
-    if (acceptsHtml(req) || req.method === "GET") {
-      redirect(req, res, "/login");
-    } else {
-      send(req, res, 401, "Authentication required.");
-    }
     return;
   }
 

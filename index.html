@@ -144,13 +144,6 @@
                   </label>
                   <button class="primary-button wide" type="submit">Add Simple Transaction</button>
                 </form>
-          </section>
-              <section class="tool-panel">
-                <div class="section-heading">
-                  <h2>Budget Warnings</h2>
-                  <span class="quiet-pill">Watch list</span>
-                </div>
-                <div id="budgetWarnings" class="budget-progress"></div>
               </section>
               <section class="tool-panel">
                 <div class="section-heading">
@@ -165,7 +158,17 @@
               <section class="tool-panel">
                 <div class="section-heading">
                   <h2>Budget Categories</h2>
-                  <button id="exportCsvBtn" class="ghost-button" type="button">CSV</button>
+                  <div class="compact-controls">
+                    <label class="inline-filter">
+                      <span>Sort</span>
+                      <select id="budgetSort">
+                        <option value="warnings">Warnings</option>
+                        <option value="name">Name</option>
+                        <option value="amount">Amount</option>
+                      </select>
+                    </label>
+                    <button id="exportCsvBtn" class="ghost-button" type="button">CSV</button>
+                  </div>
                 </div>
                 <div id="budgetProgress" class="budget-progress"></div>
               </section>
@@ -648,7 +651,7 @@
                 <ul>
                   <li>Pick the month at the top before reviewing totals.</li>
                   <li>Use Quick Add for day-to-day entries.</li>
-                  <li>Use Budget Warnings and Upcoming Bills & Income to decide what needs attention next.</li>
+                  <li>Use Budget Categories sorted by Warnings and Upcoming Bills & Income to decide what needs attention next.</li>
                 </ul>
               </div>
             </article>

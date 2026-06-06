@@ -19,7 +19,7 @@ const el = {};
   "logoutBtn",
   "addTransactionBtn","transactionAddBtn","recurringAddBtn","viewRecurringBtn","undoBtn","redoBtn","incomeTotal","expenseTotal","remainderTotal","aumTotal",
   "quickTransactionForm","quickClearBtn","quickDate","quickType","quickCategory","quickAccount","quickToAccount","quickAmount","quickDescription",
-  "budgetProgress","budgetWarnings","homeUpcoming","dailyAverage","dailyBars","transactionStartDate","transactionEndDate","transactionThisMonthBtn","searchTransactions","filterType","transactionRows","budgetForm","budgetId","budgetCategory",
+  "budgetProgress","budgetSort","homeUpcoming","dailyAverage","dailyBars","transactionStartDate","transactionEndDate","transactionThisMonthBtn","searchTransactions","filterType","transactionRows","budgetForm","budgetId","budgetCategory",
   "budgetLimit","budgetPeriod","budgetGroup","budgetSubmitLabel","resetBudgetForm","budgetList","budgetCount","reportPeriodLabel","reportIncome",
   "reportExpense","reportRemaining","reportNetWorth","reportCategories","reportBudgets","reportAccounts","reportUpcoming","reportForecast",
   "assetTotal","debtTotal","netWorthTotal","accountForm","accountId","accountName","accountType","accountValue","accountOwed","accountBalance",
@@ -78,6 +78,7 @@ function bind() {
   el.transactionThisMonthBtn.onclick = () => { state.transactionStartDate = monthStart(state.currentMonth); state.transactionEndDate = monthEnd(state.currentMonth); save(); renderTransactions(); };
   el.budgetForm.onsubmit = saveBudget;
   el.resetBudgetForm.onclick = resetBudget;
+  el.budgetSort.onchange = () => { state.budgetSort = el.budgetSort.value; save(); renderBudgets(); };
   el.accountForm.onsubmit = saveAccount;
   el.resetAccountForm.onclick = resetAccount;
   el.accountType.onchange = fillOpening;
@@ -121,6 +122,7 @@ function base() {
   return {
     version: 4, theme: "classic", currentMonth: thisMonth, periodMode: "month",
     activeUserId: uid, activeBookId: bid, activeRegisterAccountId: "", registerStartDate: monthStart(thisMonth), registerEndDate: monthEnd(thisMonth),
+    budgetSort: "warnings",
     transactionStartDate: monthStart(thisMonth), transactionEndDate: monthEnd(thisMonth),
     users: [{ id: uid, name: "Personal", email: "", role: "admin" }],
     books: [{ id: bid, name: "Household Budget", ownerUserId: uid }],
@@ -148,6 +150,7 @@ function normalize(input = {}) {
   if (!s.users.some((u) => u.id === s.activeUserId)) s.activeUserId = s.users[0].id;
   if (!s.books.some((bk) => bk.id === s.activeBookId)) s.activeBookId = s.books[0].id;
   s.activeRegisterAccountId ||= "";
+  s.budgetSort = ["warnings", "name", "amount"].includes(s.budgetSort) ? s.budgetSort : "warnings";
   s.registerStartDate = /^\d{4}-\d{2}-\d{2}$/.test(s.registerStartDate || "") ? s.registerStartDate : monthStart(s.currentMonth || thisMonth);
   s.registerEndDate = /^\d{4}-\d{2}-\d{2}$/.test(s.registerEndDate || "") ? s.registerEndDate : monthEnd(s.currentMonth || thisMonth);
   s.transactionStartDate = /^\d{4}-\d{2}-\d{2}$/.test(s.transactionStartDate || "") ? s.transactionStartDate : monthStart(s.currentMonth || thisMonth);
@@ -296,7 +299,7 @@ function renderSummary() {
   const p = periodTxns(), inc = sum(p.filter((x) => x.type === "income")), exp = sum(p.filter((x) => x.type === "expense")), nw = totals();
   el.incomeTotal.textContent = money(inc); el.expenseTotal.textContent = money(exp); el.remainderTotal.textContent = money(inc - exp); el.aumTotal.textContent = money(nw.netWorth);
   el.assetTotal.textContent = money(nw.assets); el.debtTotal.textContent = money(nw.liabilities); el.netWorthTotal.textContent = money(nw.netWorth); el.accountSummary.textContent = `${money(nw.netWorth)} net`;
-  renderHomeWarnings(p);
+  renderHomeUpcoming();
   const buckets = buildBuckets(), max = Math.max(...buckets.map((x) => x.amount), 1), spent = sum(buckets);
   el.dailyAverage.textContent = `${money(spent / Math.max(buckets.length, 1))}${state.periodMode === "year" ? "/month" : "/day"}`;
   el.dailyBars.style.gridTemplateColumns = `repeat(${buckets.length}, minmax(7px, 1fr))`;
@@ -308,10 +311,21 @@ function renderSummary() {
 
 function renderBudgets() {
   const spent = byCategory(periodTxns().filter((x) => x.type === "expense"));
-  const list = L().budgets;
+  const list = sortedBudgets(spent);
   el.budgetCount.textContent = `${list.length} categories`;
+  el.budgetSort.value = state.budgetSort;
   el.budgetProgress.innerHTML = list.map((b) => progress(b, spent[b.category] || 0)).join("") || emptyHtml();
   el.budgetList.innerHTML = list.map((b) => item(b.category, `${b.group} / ${money(b.monthlyLimit)} ${b.period}`, `<button class="row-button" onclick="editBudget('${b.id}')">Edit</button><button class="row-button danger" onclick="deleteBudget('${b.id}')">Delete</button>`)).join("") || emptyHtml();
+}
+
+function sortedBudgets(spent) {
+  return L().budgets.slice().sort((a, b) => {
+    const av = spent[a.category] || 0, bv = spent[b.category] || 0;
+    if (state.budgetSort === "name") return a.category.localeCompare(b.category);
+    if (state.budgetSort === "amount") return bv - av || b.monthlyLimit - a.monthlyLimit || a.category.localeCompare(b.category);
+    const ar = limit(a) ? av / limit(a) : 0, br = limit(b) ? bv / limit(b) : 0;
+    return br - ar || bv - av || a.category.localeCompare(b.category);
+  });
 }
 
 function renderTransactions() {
@@ -346,14 +360,7 @@ function renderReports() {
   el.reportUpcoming.innerHTML = upcomingHtml;
 }
 
-function renderHomeWarnings(p) {
-  const spent = byCategory(p.filter((x) => x.type === "expense"));
-  const warnings = L().budgets
-    .map((b) => ({ budget: b, spent: spent[b.category] || 0, limit: limit(b) }))
-    .filter((x) => x.limit > 0 && x.spent / x.limit >= 0.8)
-    .sort((a, b) => (b.spent / b.limit) - (a.spent / a.limit))
-    .slice(0, 5);
-  el.budgetWarnings.innerHTML = warnings.map((x) => progress(x.budget, x.spent)).join("") || emptyHtml("No budget warnings", "Categories at 80% or more will show here.");
+function renderHomeUpcoming() {
   el.homeUpcoming.innerHTML = upcoming().slice(0, 5).map((r) => recurringLine(r)).join("") || emptyHtml("Nothing due soon", "Recurring bills and income due in the next 30 days will show here.");
 }
 

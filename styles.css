@@ -135,6 +135,18 @@ h2 {
   flex-wrap: wrap;
 }
 
+.topbar-actions > select {
+  width: auto;
+  min-width: 160px;
+  max-width: 230px;
+  flex: 0 0 auto;
+}
+
+.topbar-actions .graphical-month-picker,
+.topbar-actions .period-toggle {
+  flex: 0 0 auto;
+}
+
 .period-toggle {
   display: inline-flex;
   gap: 4px;
@@ -183,6 +195,7 @@ h2 {
   font-size: 0.9rem;
   font-weight: 700;
   flex-wrap: wrap;
+  position: relative;
 }
 
 .month-picker label {
@@ -201,6 +214,68 @@ h2 {
 
 .month-picker .year-field {
   width: 92px;
+}
+
+.month-display {
+  position: relative;
+  min-width: 170px;
+}
+
+.month-display-button {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.month-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 292px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.month-popover-header {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.month-cell {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.month-cell:hover,
+.month-cell.is-active {
+  border-color: var(--teal);
+  background: rgba(1, 128, 122, 0.12);
+  color: var(--teal);
 }
 
 input,
@@ -402,6 +477,17 @@ textarea:focus {
   margin-bottom: 16px;
 }
 
+.dashboard-stack {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.home-layout,
+.report-analysis-layout {
+  align-items: start;
+}
+
 .tool-panel {
   padding: 16px;
 }
@@ -456,6 +542,27 @@ label span {
   margin: 0;
 }
 
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  white-space: nowrap;
+}
+
+.inline-check input {
+  width: 16px;
+  min-height: 16px;
+}
+
+.inline-check span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: none;
+}
+
 .quiet-pill {
   flex: 0 0 auto;
   max-width: 100%;
@@ -468,18 +575,74 @@ label span {
   overflow-wrap: anywhere;
 }
 
+.quiet-pill.is-good {
+  border-color: rgba(47, 143, 70, 0.35);
+  color: var(--green);
+}
+
+.quiet-pill.is-alert {
+  border-color: rgba(217, 95, 67, 0.35);
+  color: var(--coral);
+}
+
+.register-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.reconcile-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.reconcile-summary > div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 12px;
+}
+
+.reconcile-summary span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.reconcile-summary strong {
+  font-size: 1.05rem;
+}
+
+.help-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 .bar-chart {
   display: grid;
   grid-template-columns: repeat(31, minmax(7px, 1fr));
   align-items: end;
-  gap: 4px;
-  min-height: 240px;
-  padding-top: 10px;
+  gap: 6px;
+  height: 188px;
+  min-height: 188px;
+  padding: 10px 0 24px;
   border-bottom: 1px solid var(--line);
+  overflow: hidden;
 }
 
 .bar {
+  align-self: end;
+  display: block;
+  width: 100%;
   min-height: 4px;
+  max-height: 150px;
   border-radius: 4px 4px 0 0;
   background: linear-gradient(180deg, var(--coral), #f2aa62);
   position: relative;
@@ -497,6 +660,8 @@ label span {
   transform: translateX(-50%);
   color: var(--muted);
   font-size: 0.68rem;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .budget-progress,
@@ -858,6 +1023,8 @@ th {
   .form-grid,
   .user-details,
   .button-grid,
+  .register-filters,
+  .reconcile-summary,
   .split-row {
     grid-template-columns: 1fr;
   }
@@ -888,7 +1055,8 @@ th {
   }
 
   .bar-chart {
-    gap: 2px;
-    min-height: 190px;
+    gap: 3px;
+    height: 188px;
+    min-height: 188px;
   }
 }

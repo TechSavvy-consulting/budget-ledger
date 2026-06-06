@@ -52,29 +52,30 @@ function readAuthConfig() {
   const envIterations = Number(process.env.AUTH_PASSWORD_ITERATIONS || 210000);
 
   if (envUsername && envPassword) {
-    return createCredential(envUsername, envPassword, envIterations);
+    return normalizeAuthUsers({ users: [createCredential(envUsername, envPassword, envIterations)] });
   }
 
   if (envUsername && envHash && envSalt) {
-    return {
+    return normalizeAuthUsers({ users: [{
       username: envUsername,
       hash: envHash,
       salt: envSalt,
       iterations: envIterations,
       digest: process.env.AUTH_PASSWORD_DIGEST || "sha256",
-    };
+    }] });
   }
 
   try {
     const saved = JSON.parse(fs.readFileSync(authConfigPath, "utf8"));
+    if (Array.isArray(saved.users) && saved.users.length) return normalizeAuthUsers(saved);
     if (saved.username && saved.hash && saved.salt) {
-      return {
+      return normalizeAuthUsers({ users: [{
         username: saved.username,
         hash: saved.hash,
         salt: saved.salt,
         iterations: Number(saved.iterations || 210000),
         digest: saved.digest || "sha256",
-      };
+      }] });
     }
   } catch {
     // Intentionally ignored so the startup error can explain every valid option.
@@ -85,10 +86,25 @@ function readAuthConfig() {
   );
 }
 
+function normalizeAuthUsers(input = {}) {
+  const users = (Array.isArray(input.users) ? input.users : [])
+    .filter((user) => user && user.username && user.hash && user.salt)
+    .map((user) => ({
+      username: String(user.username).trim(),
+      salt: String(user.salt),
+      iterations: Number(user.iterations || 210000),
+      digest: user.digest || "sha256",
+      hash: String(user.hash),
+    }));
+
+  if (!users.length) throw new Error("Authentication has no configured users.");
+  return { users };
+}
+
 function createCredential(username, password, iterations) {
   const salt = crypto.randomBytes(16).toString("hex");
   return {
-    username,
+    username: String(username).trim(),
     salt,
     iterations,
     digest: "sha256",
@@ -108,9 +124,18 @@ function safeEqualHex(left, right) {
 }
 
 function verifyLogin(username, password) {
-  if (username !== auth.username) return false;
-  const attempted = hashPassword(password, auth.salt, auth.iterations, auth.digest);
-  return safeEqualHex(attempted, auth.hash);
+  const user = auth.users.find((entry) => entry.username === username);
+  if (!user) return null;
+  const attempted = hashPassword(password, user.salt, user.iterations, user.digest);
+  return safeEqualHex(attempted, user.hash) ? user : null;
+}
+
+function writeAuthConfig() {
+  fs.writeFileSync(authConfigPath, JSON.stringify({ users: auth.users }, null, 2));
+}
+
+function publicAuthUsers() {
+  return auth.users.map((user) => ({ username: user.username }));
 }
 
 function isSecureRequest(req) {
@@ -199,10 +224,10 @@ function getSession(req) {
   return session;
 }
 
-function createSession(req, res) {
+function createSession(req, res, username) {
   const token = crypto.randomBytes(32).toString("base64url");
   sessions.set(token, {
-    username: auth.username,
+    username,
     expiresAt: Date.now() + sessionTtlMs,
   });
   res.setHeader("Set-Cookie", buildCookie(req, token, Math.floor(sessionTtlMs / 1000)));
@@ -270,15 +295,97 @@ async function handleLogin(req, res) {
       ? JSON.parse(raw || "{}")
       : Object.fromEntries(new URLSearchParams(raw));
 
-    if (verifyLogin(String(payload.username || ""), String(payload.password || ""))) {
-      createSession(req, res);
-      sendJson(req, res, 200, { ok: true, username: auth.username });
+    const user = verifyLogin(String(payload.username || ""), String(payload.password || ""));
+    if (user) {
+      createSession(req, res, user.username);
+      sendJson(req, res, 200, { ok: true, username: user.username });
       return;
     }
 
     sendJson(req, res, 401, { ok: false, message: "Invalid username or password." });
   } catch {
     sendJson(req, res, 400, { ok: false, message: "Unable to process login." });
+  }
+}
+
+async function handleGetAuthUsers(req, res) {
+  if (!auth) {
+    sendJson(req, res, 200, { ok: true, users: [] });
+    return;
+  }
+  sendJson(req, res, 200, { ok: true, users: publicAuthUsers() });
+}
+
+async function handleSaveAuthUser(req, res) {
+  try {
+    if (!auth) {
+      sendJson(req, res, 200, { ok: true, users: [] });
+      return;
+    }
+    const raw = await readBody(req);
+    const payload = JSON.parse(raw || "{}");
+    const username = String(payload.username || "").trim();
+    const previousUsername = String(payload.previousUsername || username).trim();
+    const password = String(payload.password || "");
+
+    if (!username) {
+      sendJson(req, res, 400, { ok: false, message: "Login username is required." });
+      return;
+    }
+
+    const existingIndex = auth.users.findIndex((user) => user.username === previousUsername);
+    const nameTaken = auth.users.some((user, index) => user.username === username && index !== existingIndex);
+    if (nameTaken) {
+      sendJson(req, res, 409, { ok: false, message: "That login username already exists." });
+      return;
+    }
+
+    if (existingIndex === -1 && !password) {
+      sendJson(req, res, 400, { ok: false, message: "Password is required for a new login." });
+      return;
+    }
+
+    if (existingIndex === -1) {
+      auth.users.push(createCredential(username, password, 210000));
+    } else if (password) {
+      auth.users[existingIndex] = createCredential(username, password, auth.users[existingIndex].iterations || 210000);
+    } else {
+      auth.users[existingIndex] = { ...auth.users[existingIndex], username };
+    }
+
+    writeAuthConfig();
+    sendJson(req, res, 200, { ok: true, users: publicAuthUsers() });
+  } catch {
+    sendJson(req, res, 400, { ok: false, message: "Unable to save login user." });
+  }
+}
+
+async function handleDeleteAuthUser(req, res) {
+  try {
+    if (!auth) {
+      sendJson(req, res, 200, { ok: true, users: [] });
+      return;
+    }
+    const raw = await readBody(req);
+    const payload = JSON.parse(raw || "{}");
+    const username = String(payload.username || "").trim();
+
+    if (auth.users.length <= 1) {
+      sendJson(req, res, 400, { ok: false, message: "Keep at least one login user." });
+      return;
+    }
+
+    const nextUsers = auth.users.filter((user) => user.username !== username);
+    if (nextUsers.length === auth.users.length) {
+      sendJson(req, res, 404, { ok: false, message: "Login user was not found." });
+      return;
+    }
+
+    auth.users = nextUsers;
+    writeAuthConfig();
+    sendJson(req, res, 200, { ok: true, users: publicAuthUsers() });
+  } catch {
+    sendJson(req, res, 400, { ok: false, message: "Unable to delete login user." });
   }
 }
 
@@ -515,6 +622,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === "/api/auth/users" && req.method === "GET") {
+    await handleGetAuthUsers(req, res);
+    return;
+  }
+
+  if (pathname === "/api/auth/users" && req.method === "PUT") {
+    await handleSaveAuthUser(req, res);
+    return;
+  }
+
+  if (pathname === "/api/auth/users" && req.method === "DELETE") {
+    await handleDeleteAuthUser(req, res);
+    return;
+  }
+
   if (pathname === "/api/state" && req.method === "GET") {
     await handleGetState(req, res);
     return;
@@ -552,7 +674,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, host, () => {
   const url = `http://${host}:${port}`;
   console.log(`Budget Ledger running at ${url}`);
-  console.log(auth ? `Authentication enabled for user "${auth.username}".` : "Authentication disabled.");
+  console.log(auth ? `Authentication enabled for ${auth.users.length} login user(s).` : "Authentication disabled.");
   console.log("Edit budget-app.config.json to change the local port.");
   console.log("Press Ctrl+C to stop the server.");
   if (shouldOpenBrowser) openBrowser(url);

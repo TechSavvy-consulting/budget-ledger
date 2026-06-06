@@ -81,6 +81,7 @@
         <button class="tab" data-tab="reports" type="button">Reports</button>
         <button class="tab" data-tab="accounts" type="button">Accounts & Assets</button>
         <button class="tab" data-tab="settings" type="button">Settings</button>
+        <button class="tab" data-tab="help" type="button">Help</button>
       </nav>
 
       <main>
@@ -575,6 +576,154 @@
               <input id="importJsonFile" class="sr-only" type="file" accept="application/json,.json" />
               <input id="importCsvFile" class="sr-only" type="file" accept="text/csv,.csv" />
             </section>
+          </div>
+        </section>
+
+        <section id="help" class="view">
+          <section class="tool-panel help-intro">
+            <div class="section-heading">
+              <h2>Budget Ledger Help</h2>
+              <span class="quiet-pill">Simple home ledger workflow</span>
+            </div>
+            <div class="workflow-strip" aria-label="Recommended workflow">
+              <article>
+                <strong>1. Set up</strong>
+                <span>Create users, name books, add accounts, and set budget targets.</span>
+              </article>
+              <article>
+                <strong>2. Record activity</strong>
+                <span>Add income, expenses, transfers, and recurring transactions as they happen.</span>
+              </article>
+              <article>
+                <strong>3. Review</strong>
+                <span>Use reports, account registers, and reconcile to find missing or uncleared items.</span>
+              </article>
+              <article>
+                <strong>4. Protect data</strong>
+                <span>Change your password, export backups, and log out when finished.</span>
+              </article>
+            </div>
+          </section>
+
+          <div class="help-grid">
+            <article class="help-card">
+              <figure class="help-shot home-shot" aria-label="Home section screenshot">
+                <div class="shot-toolbar"><span></span><span></span><span></span></div>
+                <div class="shot-form">
+                  <span></span><span></span><span></span><span></span>
+                </div>
+                <div class="shot-bars"><span style="width:92%"></span><span style="width:58%"></span><span style="width:34%"></span></div>
+              </figure>
+              <div>
+                <h2>Home</h2>
+                <p>Use Home for fast entry and a quick read on budget categories. Quick Add is best for simple income, expenses, and transfers that do not need notes or splits.</p>
+                <ul>
+                  <li>Pick the month at the top before reviewing totals.</li>
+                  <li>Use Quick Add for day-to-day entries.</li>
+                  <li>Watch Budget Categories for overspending signals.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot transactions-shot" aria-label="Transactions section screenshot">
+                <div class="shot-toolbar wide"><span></span><span></span><span></span><span></span></div>
+                <div class="shot-table">
+                  <span></span><span></span><span></span><span></span>
+                </div>
+              </figure>
+              <div>
+                <h2>Transactions</h2>
+                <p>Transactions are the main ledger. Use the date range fields to narrow what you are reviewing, and use Add Recurring for bills, paychecks, and transfers that repeat.</p>
+                <ul>
+                  <li>Expenses debit the selected account.</li>
+                  <li>Income increases the selected account.</li>
+                  <li>Transfers move money between two accounts.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot budgets-shot" aria-label="Budgets section screenshot">
+                <div class="shot-form compact"><span></span><span></span><span></span></div>
+                <div class="shot-bars"><span style="width:85%"></span><span style="width:46%"></span><span style="width:70%"></span></div>
+              </figure>
+              <div>
+                <h2>Budgets</h2>
+                <p>Create targets for categories you want to track. Budget periods can be weekly, monthly, or yearly, and reports compare actual spending against those targets.</p>
+                <ul>
+                  <li>Use clear category names like Grocery, Housing, Fuel, or Insurance.</li>
+                  <li>Edit a target when your plan changes.</li>
+                  <li>Delete targets you no longer track.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot accounts-shot" aria-label="Accounts and assets section screenshot">
+                <div class="shot-metrics"><span></span><span></span><span></span></div>
+                <div class="shot-table checks">
+                  <span></span><span></span><span></span><span></span>
+                </div>
+              </figure>
+              <div>
+                <h2>Accounts & Assets</h2>
+                <p>Add checking, savings, credit cards, loans, vehicles, and other assets or liabilities. The register shows running account activity inside the selected date range.</p>
+                <ul>
+                  <li>Check In Bank when a transaction appears at your bank.</li>
+                  <li>Enter statement date and balance in Reconcile.</li>
+                  <li>Reconcile only when the difference reaches $0.00.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot reports-shot" aria-label="Reports section screenshot">
+                <div class="shot-metrics"><span></span><span></span><span></span><span></span></div>
+                <div class="shot-chart"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              </figure>
+              <div>
+                <h2>Reports</h2>
+                <p>Reports summarize income, spending, remaining cash, net worth, daily expense flow, upcoming cash flow, top spending, and account balances for the selected period.</p>
+                <ul>
+                  <li>Switch Week, Month, or Year at the top.</li>
+                  <li>Use Daily Expense Flow to spot unusual spending days.</li>
+                  <li>Use Upcoming Cash Flow to see what is coming next.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot settings-shot" aria-label="Settings section screenshot">
+                <div class="shot-form compact"><span></span><span></span><span></span></div>
+                <div class="shot-toolbar"><span></span><span></span><span></span></div>
+              </figure>
+              <div>
+                <h2>Settings</h2>
+                <p>Admins can add users, assign roles, edit books, delete books, and manage demo data. Standard users can change appearance, change their own password, and import or export their own data.</p>
+                <ul>
+                  <li>Admins should keep at least one admin login active.</li>
+                  <li>Users cannot see or edit other users' books.</li>
+                  <li>Use Log Out when sharing a computer.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot backup-shot" aria-label="Import and export screenshot">
+                <div class="shot-button-grid"><span></span><span></span><span></span><span></span></div>
+                <div class="shot-bars"><span style="width:66%"></span><span style="width:42%"></span></div>
+              </figure>
+              <div>
+                <h2>Import & Export</h2>
+                <p>Export JSON for a restorable backup, CSV for transaction review, or Spreadsheet for workbook-style reporting. Imports replace the relevant data, so export first when you are unsure.</p>
+                <ul>
+                  <li>Admins export the full app state.</li>
+                  <li>Users export only their own book data.</li>
+                  <li>Keep periodic JSON backups outside the app.</li>
+                </ul>
+              </div>
+            </article>
           </div>
         </section>
       </main>

@@ -706,6 +706,213 @@ textarea:focus {
   align-items: start;
 }
 
+.help-intro {
+  margin-bottom: 16px;
+}
+
+.workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-strip article {
+  min-height: 118px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  padding: 14px;
+}
+
+.workflow-strip strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--teal-dark);
+  font-size: 0.95rem;
+}
+
+.workflow-strip span,
+.help-card p,
+.help-card li {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.help-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.44fr) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--control-wash);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.help-card h2 {
+  margin-bottom: 8px;
+}
+
+.help-card p {
+  margin-bottom: 10px;
+}
+
+.help-card ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.help-shot {
+  display: grid;
+  gap: 10px;
+  min-height: 180px;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, var(--surface-strong), var(--panel-wash));
+  padding: 12px;
+}
+
+.help-shot::before {
+  content: "";
+  display: block;
+  width: 44%;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--ink);
+  opacity: 0.88;
+}
+
+.shot-toolbar,
+.shot-metrics,
+.shot-button-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.shot-toolbar {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.shot-toolbar.wide {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.shot-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.reports-shot .shot-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.shot-button-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.shot-toolbar span,
+.shot-metrics span,
+.shot-button-grid span,
+.shot-form span,
+.shot-table span,
+.shot-bars span {
+  display: block;
+  border-radius: 6px;
+}
+
+.shot-toolbar span,
+.shot-button-grid span {
+  height: 22px;
+  background: var(--teal);
+}
+
+.shot-metrics span {
+  height: 40px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.shot-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.shot-form.compact {
+  grid-template-columns: 1fr;
+}
+
+.shot-form span {
+  height: 26px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.shot-bars {
+  display: grid;
+  align-content: end;
+  gap: 7px;
+}
+
+.shot-bars span {
+  height: 11px;
+  background: var(--gold);
+}
+
+.shot-table {
+  display: grid;
+  gap: 6px;
+}
+
+.shot-table span {
+  height: 22px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(90deg, var(--surface) 0 35%, var(--panel-wash) 35% 100%);
+}
+
+.shot-table.checks span::before {
+  content: "";
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 4px 0 0 8px;
+  border: 2px solid var(--green);
+  border-radius: 3px;
+}
+
+.shot-chart {
+  display: flex;
+  align-items: end;
+  gap: 7px;
+  min-height: 96px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shot-chart span {
+  flex: 1 1 0;
+  border-radius: 6px 6px 0 0;
+  background: var(--coral);
+}
+
+.shot-chart span:nth-child(1) { height: 36px; }
+.shot-chart span:nth-child(2) { height: 68px; }
+.shot-chart span:nth-child(3) { height: 44px; }
+.shot-chart span:nth-child(4) { height: 82px; }
+.shot-chart span:nth-child(5) { height: 58px; }
+.shot-chart span:nth-child(6) { height: 74px; }
+
 .tool-panel {
   padding: 16px;
 }
@@ -1215,6 +1422,15 @@ th {
   .report-grid {
     grid-template-columns: 1fr;
   }
+
+  .workflow-strip,
+  .help-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .help-card {
+    grid-template-columns: minmax(170px, 0.38fr) minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
@@ -1226,10 +1442,16 @@ th {
   .form-grid,
   .user-details,
   .button-grid,
+  .workflow-strip,
+  .help-card,
   .register-filters,
   .reconcile-summary,
   .split-row {
     grid-template-columns: 1fr;
+  }
+
+  .help-shot {
+    min-height: 156px;
   }
 
   .wide {

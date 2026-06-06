@@ -1,4 +1,5 @@
 auth.config.local.json
+budget-ledger-data.json
 .env
 node_modules/
 npm-debug.log*

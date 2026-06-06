@@ -1495,7 +1495,6 @@ th {
     max-width: 100%;
   }
 
-  .summary-grid,
   .form-grid,
   .user-details,
   .button-grid,
@@ -1505,6 +1504,32 @@ th {
   .reconcile-summary,
   .split-row {
     grid-template-columns: 1fr;
+  }
+
+  .summary-grid {
+    width: calc(100vw - 28px);
+    max-width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .summary-grid .metric {
+    min-width: 0;
+    aspect-ratio: 1 / 1;
+    min-height: 0;
+    padding: 12px;
+    border-top-width: 4px;
+  }
+
+  .summary-grid .metric span {
+    margin-bottom: 8px;
+    font-size: 0.7rem;
+    line-height: 1.15;
+  }
+
+  .summary-grid .metric strong {
+    font-size: clamp(1.05rem, 5.8vw, 1.55rem);
+    line-height: 1.08;
   }
 
   .help-shot {

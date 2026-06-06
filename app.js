@@ -8,24 +8,25 @@ let syncTimer;
 let undo = [];
 let redo = [];
 let toastTimer;
+let currentLogin = { username: "local", role: "admin" };
 const monthStart = (value = thisMonth) => `${value}-01`;
 const monthEnd = (value = thisMonth) => dateInput(new Date(new Date(`${value}-01T12:00:00`).getFullYear(), new Date(`${value}-01T12:00:00`).getMonth() + 1, 0, 12));
 
 const el = {};
 [
-  "activeUserSelect","activeBookSelect","monthFilter","monthSelect","yearInput","prevMonthBtn","nextMonthBtn","todayMonthBtn",
+  "activeUserLabel","activeBookLabel","monthFilter","monthSelect","yearInput","prevMonthBtn","nextMonthBtn","todayMonthBtn",
   "periodLabelBtn","periodPickerLabel","monthPickerPanel","pickerPrevYearBtn","pickerNextYearBtn","pickerYearLabel","pickerMonthGrid",
   "addTransactionBtn","transactionAddBtn","recurringAddBtn","viewRecurringBtn","undoBtn","redoBtn","incomeTotal","expenseTotal","remainderTotal","aumTotal",
   "quickTransactionForm","quickClearBtn","quickDate","quickType","quickCategory","quickAccount","quickToAccount","quickAmount","quickDescription",
-  "budgetProgress","dailyAverage","dailyBars","searchTransactions","filterType","transactionRows","budgetForm","budgetId","budgetCategory",
+  "budgetProgress","dailyAverage","dailyBars","transactionStartDate","transactionEndDate","transactionThisMonthBtn","searchTransactions","filterType","transactionRows","budgetForm","budgetId","budgetCategory",
   "budgetLimit","budgetPeriod","budgetGroup","budgetSubmitLabel","resetBudgetForm","budgetList","budgetCount","reportPeriodLabel","reportIncome",
   "reportExpense","reportRemaining","reportNetWorth","reportCategories","reportBudgets","reportAccounts","reportUpcoming","reportForecast",
   "assetTotal","debtTotal","netWorthTotal","accountForm","accountId","accountName","accountType","accountValue","accountOwed","accountBalance",
   "accountSubmitLabel","resetAccountForm","accountSummary","accountList","registerAccountSelect","registerBalance","registerRows","reconcileForm",
   "registerStartDate","registerEndDate","registerThisMonthBtn","statementDate","statementBalance","reconcileStatus","reconcileClearedBalance",
-  "reconcileOutstanding","reconcileHelp","userForm","userId","userName","userEmail","userPassword","userPasswordConfirm","userSubmitLabel","resetUserForm","userCount",
-  "userList","bookForm","bookId","bookName","bookOwner","bookSubmitLabel","resetBookForm","bookCount","bookList","shareForm","shareUserSelect",
-  "shareList","themeSelect","exportCsvBtn","exportJsonBtn","importJsonBtn","importJsonFile","importCsvBtn","importCsvFile","exportWorkbookBtn",
+  "reconcileOutstanding","reconcileHelp","userForm","userId","userName","userEmail","userRole","userPassword","userPasswordConfirm","userSubmitLabel","resetUserForm","userCount",
+  "userList","bookForm","bookId","bookName","bookSubmitLabel","resetBookForm","bookCount","bookList",
+  "themeSelect","exportCsvBtn","exportJsonBtn","importJsonBtn","importJsonFile","importCsvBtn","importCsvFile","exportWorkbookBtn",
   "backupZipBtn","addDemoBtn","deleteDemoBtn","recurringForm","recurringId","recurringName","recurringType","recurringAccount","recurringToAccount",
   "recurringCategory","recurringAmount","recurringCadence","recurringNextDate","recurringSubmitLabel","resetRecurringForm","postDueRecurringBtn","recurringDialog","recurringDialogTitle","closeRecurringDialog",
   "recurringList","transactionDialog","transactionForm","transactionDialogTitle","closeTransactionDialog","transactionId","txnDate","txnType",
@@ -36,11 +37,12 @@ const el = {};
 let state = normalize(load());
 init();
 
-function init() {
+async function init() {
   document.body.dataset.theme = state.theme;
-  applyLoginSelection();
   bind();
   resetAll();
+  await loadSession();
+  ensureLoginIdentity();
   syncMonth(state.currentMonth);
   setPeriod(state.periodMode, false);
   ensureAccess();
@@ -49,8 +51,6 @@ function init() {
 }
 
 function bind() {
-  el.activeUserSelect.onchange = () => { state.activeUserId = el.activeUserSelect.value; ensureAccess(); save(); render(); };
-  el.activeBookSelect.onchange = () => { state.activeBookId = el.activeBookSelect.value; save(); render(); };
   $$(".period-button").forEach((b) => b.onclick = () => setPeriod(b.dataset.period));
   el.monthSelect.onchange = monthFromControls;
   el.yearInput.onchange = monthFromControls;
@@ -74,6 +74,9 @@ function bind() {
   el.quickClearBtn.onclick = resetQuick;
   el.searchTransactions.oninput = renderTransactions;
   el.filterType.onchange = renderTransactions;
+  el.transactionStartDate.onchange = () => { state.transactionStartDate = el.transactionStartDate.value || monthStart(state.currentMonth); save(); renderTransactions(); };
+  el.transactionEndDate.onchange = () => { state.transactionEndDate = el.transactionEndDate.value || monthEnd(state.currentMonth); save(); renderTransactions(); };
+  el.transactionThisMonthBtn.onclick = () => { state.transactionStartDate = monthStart(state.currentMonth); state.transactionEndDate = monthEnd(state.currentMonth); save(); renderTransactions(); };
   el.budgetForm.onsubmit = saveBudget;
   el.resetBudgetForm.onclick = resetBudget;
   el.accountForm.onsubmit = saveAccount;
@@ -92,7 +95,6 @@ function bind() {
   el.resetUserForm.onclick = resetUser;
   el.bookForm.onsubmit = saveBook;
   el.resetBookForm.onclick = resetBook;
-  el.shareForm.onsubmit = shareBook;
   el.themeSelect.onchange = () => { record(); state.theme = el.themeSelect.value; document.body.dataset.theme = state.theme; save(); };
   el.exportCsvBtn.onclick = exportCsv;
   el.exportJsonBtn.onclick = exportJson;
@@ -119,8 +121,9 @@ function base() {
   return {
     version: 4, theme: "classic", currentMonth: thisMonth, periodMode: "month",
     activeUserId: uid, activeBookId: bid, activeRegisterAccountId: "", registerStartDate: monthStart(thisMonth), registerEndDate: monthEnd(thisMonth),
-    users: [{ id: uid, name: "Personal", email: "" }],
-    books: [{ id: bid, name: "Household Budget", ownerUserId: uid, sharedUserIds: [] }],
+    transactionStartDate: monthStart(thisMonth), transactionEndDate: monthEnd(thisMonth),
+    users: [{ id: uid, name: "Personal", email: "", role: "admin" }],
+    books: [{ id: bid, name: "Household Budget", ownerUserId: uid }],
     ledgers: { [bid]: ledger({ transactions: starters(), accounts: accounts() }) }
   };
 }
@@ -147,17 +150,43 @@ function normalize(input = {}) {
   s.activeRegisterAccountId ||= "";
   s.registerStartDate = /^\d{4}-\d{2}-\d{2}$/.test(s.registerStartDate || "") ? s.registerStartDate : monthStart(s.currentMonth || thisMonth);
   s.registerEndDate = /^\d{4}-\d{2}-\d{2}$/.test(s.registerEndDate || "") ? s.registerEndDate : monthEnd(s.currentMonth || thisMonth);
+  s.transactionStartDate = /^\d{4}-\d{2}-\d{2}$/.test(s.transactionStartDate || "") ? s.transactionStartDate : monthStart(s.currentMonth || thisMonth);
+  s.transactionEndDate = /^\d{4}-\d{2}-\d{2}$/.test(s.transactionEndDate || "") ? s.transactionEndDate : monthEnd(s.currentMonth || thisMonth);
   return s;
 }
 
-function applyLoginSelection() {
+async function loadSession() {
   try {
-    const selection = JSON.parse(sessionStorage.getItem("budget-ledger-open-selection") || "null");
-    sessionStorage.removeItem("budget-ledger-open-selection");
-    if (!selection) return;
-    if (state.users.some((u) => u.id === selection.userId)) state.activeUserId = selection.userId;
-    if (state.books.some((b) => b.id === selection.bookId)) state.activeBookId = selection.bookId;
+    const res = await fetch("/api/session");
+    if (!res.ok) return;
+    const session = await res.json();
+    currentLogin = { username: session.username || "local", role: session.role === "admin" ? "admin" : "user" };
   } catch {}
+}
+
+function ensureLoginIdentity() {
+  const username = currentLogin.username || "local";
+  let u = state.users.find((x) => x.email === username);
+  if (!u) {
+    u = username === "admin" && state.users.length === 1 && !state.users[0].email ? state.users[0] : null;
+    if (u) {
+      u.email = username;
+      u.role = currentLogin.role;
+    }
+  }
+  if (!u) {
+    u = user({ name: title(username.replace(/@.*/, "").replace(/[._-]+/g, " ")) || username, email: username, role: currentLogin.role });
+    state.users.push(u);
+  }
+  u.role = currentLogin.role;
+  let b = state.books.find((book) => book.ownerUserId === u.id);
+  if (!b) {
+    b = book({ name: `${u.name}'s Budget`, ownerUserId: u.id }, u.id);
+    state.books.push(b);
+    state.ledgers[b.id] = ledger();
+  }
+  state.activeUserId = u.id;
+  state.activeBookId = b.id;
 }
 
 function ledger(x = {}) {
@@ -169,8 +198,8 @@ function ledger(x = {}) {
   };
 }
 
-function user(x = {}) { return { id: x.id || id(), name: x.name || "User", email: x.email || "", demo: !!x.demo }; }
-function book(x = {}, owner) { return { id: x.id || id(), name: x.name || "Budget Book", ownerUserId: x.ownerUserId || owner, sharedUserIds: Array.isArray(x.sharedUserIds) ? x.sharedUserIds : [], demo: !!x.demo }; }
+function user(x = {}) { return { id: x.id || id(), name: x.name || "User", email: x.email || "", role: x.role === "admin" ? "admin" : "user", demo: !!x.demo }; }
+function book(x = {}, owner) { return { id: x.id || id(), name: x.name || "Budget Book", ownerUserId: x.ownerUserId || owner, demo: !!x.demo }; }
 function txn(x = {}) { return { id: x.id || id(), date: x.date || today, type: ["expense","income","transfer"].includes(x.type) ? x.type : "expense", payee: x.payee || "", accountId: x.accountId || "", toAccountId: x.toAccountId || "", category: x.category || "Other", description: x.description || x.payee || "Transaction", amount: +x.amount || 0, cleared: !!x.cleared, reconciled: !!x.reconciled, payPeriod: x.payPeriod || "none", notes: x.notes || "", splits: Array.isArray(x.splits) ? x.splits.map(split) : [], demo: !!x.demo }; }
 function split(x = {}) { return { id: x.id || id(), category: x.category || "Other", amount: +x.amount || 0, memo: x.memo || "", type: x.type || "expense" }; }
 function budget(x = {}) { return { id: x.id || id(), category: x.category || "Other", monthlyLimit: +x.monthlyLimit || 0, period: ["week","month","year"].includes(x.period) ? x.period : "month", group: x.group || "expense", demo: !!x.demo }; }
@@ -181,9 +210,20 @@ function accounts() { return [account({ name: "Checking" }), account({ name: "Sa
 function starters() { return [txn({ date: today, type: "income", category: "Income", description: "Example paycheck", amount: 2500, cleared: true }), txn({ date: today, type: "expense", category: "Grocery", description: "Example grocery run", amount: 86.42, cleared: true })]; }
 
 function L() { return state.ledgers[state.activeBookId] || ledger(); }
+function currentUser() { return state.users.find((x) => x.id === state.activeUserId) || state.users[0]; }
 function currentBook() { return state.books.find((x) => x.id === state.activeBookId) || state.books[0]; }
-function accessible() { return state.books.filter((x) => x.ownerUserId === state.activeUserId || x.sharedUserIds.includes(state.activeUserId)); }
+function isAdmin() { return currentLogin.role === "admin"; }
+function accessible() { return state.books.filter((x) => x.ownerUserId === state.activeUserId); }
 function ensureAccess() { const list = accessible(); if (!list.some((x) => x.id === state.activeBookId)) state.activeBookId = list[0]?.id || state.books[0]?.id; }
+function ensureUserBook(u) {
+  let b = state.books.find((book) => book.ownerUserId === u.id);
+  if (!b) {
+    b = book({ name: `${u.name}'s Budget`, ownerUserId: u.id }, u.id);
+    state.books.push(b);
+    state.ledgers[b.id] = ledger();
+  }
+  return b;
+}
 
 function save() {
   localStorage.setItem(KEY, JSON.stringify(state));
@@ -198,6 +238,7 @@ async function hydrate() {
     const body = await res.json();
     if (body.state) {
       state = normalize(body.state);
+      ensureLoginIdentity();
       localStorage.setItem(KEY, JSON.stringify(state));
       document.body.dataset.theme = state.theme;
       syncMonth(state.currentMonth);
@@ -231,10 +272,8 @@ function render() {
 }
 
 function renderTop() {
-  el.activeUserSelect.innerHTML = state.users.map((x) => opt(x.id, x.name)).join("");
-  el.activeUserSelect.value = state.activeUserId;
-  el.activeBookSelect.innerHTML = accessible().map((x) => opt(x.id, x.name)).join("");
-  el.activeBookSelect.value = state.activeBookId;
+  el.activeUserLabel.textContent = `${currentUser()?.name || currentLogin.username} (${currentLogin.role})`;
+  el.activeBookLabel.textContent = currentBook()?.name || "Budget Book";
   el.themeSelect.value = state.theme;
 }
 
@@ -273,7 +312,16 @@ function renderBudgets() {
 
 function renderTransactions() {
   const q = el.searchTransactions.value.toLowerCase(), type = el.filterType.value;
-  const rows = periodTxns().filter((x) => (type === "all" || x.type === type) && `${x.date} ${x.payee} ${x.description} ${x.category}`.toLowerCase().includes(q)).sort((a, b) => b.date.localeCompare(a.date));
+  if (!state.transactionStartDate) state.transactionStartDate = monthStart(state.currentMonth);
+  if (!state.transactionEndDate) state.transactionEndDate = monthEnd(state.currentMonth);
+  el.transactionStartDate.value = state.transactionStartDate;
+  el.transactionEndDate.value = state.transactionEndDate;
+  const rows = L().transactions.filter((x) =>
+    (!state.transactionStartDate || x.date >= state.transactionStartDate) &&
+    (!state.transactionEndDate || x.date <= state.transactionEndDate) &&
+    (type === "all" || x.type === type) &&
+    `${x.date} ${x.payee} ${x.description} ${x.category}`.toLowerCase().includes(q)
+  ).sort((a, b) => b.date.localeCompare(a.date));
   el.transactionRows.innerHTML = rows.map((x) => {
     const a = L().accounts.find((n) => n.id === x.accountId), b = L().accounts.find((n) => n.id === x.toAccountId);
     const acct = x.type === "transfer" ? `${a?.name || "No account"} -> ${b?.name || "No account"}` : a?.name || "No account";
@@ -326,16 +374,13 @@ function renderRegister() {
 }
 
 function renderSettings() {
-  el.bookOwner.innerHTML = state.users.map((u) => opt(u.id, u.name)).join("");
-  el.bookOwner.value = state.activeUserId;
+  const admin = isAdmin();
+  [el.userForm.closest(".tool-panel"), el.bookForm.closest(".tool-panel")].forEach((panel) => panel.hidden = !admin);
+  [el.backupZipBtn, el.addDemoBtn, el.deleteDemoBtn].forEach((button) => button.hidden = !admin);
   el.userCount.textContent = `${state.users.length} users`;
-  el.userList.innerHTML = state.users.map((u) => item(u.name, u.email || "No email", `<button class="row-button" onclick="editUser('${u.id}')">Edit</button><button class="row-button danger" onclick="deleteUser('${u.id}')">Delete</button>`, "user-item")).join("");
+  el.userList.innerHTML = state.users.map((u) => item(u.name, `${u.email || "No login"} / ${u.role}`, `<button class="row-button" onclick="editUser('${u.id}')">Edit</button><button class="row-button danger" onclick="deleteUser('${u.id}')">Delete</button>`, "user-item")).join("");
   el.bookCount.textContent = `${state.books.length} books`;
   el.bookList.innerHTML = state.books.map((b) => item(b.name, `Owner: ${state.users.find((u) => u.id === b.ownerUserId)?.name || "Unknown"}`, `<button class="row-button" onclick="editBook('${b.id}')">Edit</button><button class="row-button danger" onclick="deleteBook('${b.id}')">Delete</button>`, "book-item")).join("");
-  const bk = currentBook(), shared = bk.sharedUserIds.map((id) => state.users.find((u) => u.id === id)).filter(Boolean);
-  el.shareUserSelect.innerHTML = state.users.filter((u) => u.id !== bk.ownerUserId && !bk.sharedUserIds.includes(u.id)).map((u) => opt(u.id, u.name)).join("");
-  el.shareForm.querySelector("button").disabled = !el.shareUserSelect.options.length;
-  el.shareList.innerHTML = `<div class="share-summary"><div><div class="item-title">${esc(bk.name)}</div><div class="item-meta">Owner: ${esc(state.users.find((u) => u.id === bk.ownerUserId)?.name || "Unknown")}</div></div>${shared.map((u) => `<div class="share-chip"><span>${esc(u.name)}</span><button class="row-button danger" onclick="unshareBook('${bk.id}','${u.id}')">Remove</button></div>`).join("") || `<div class="item-meta">Not shared yet.</div>`}</div>`;
 }
 function renderRecurring() {
   el.recurringList.innerHTML = L().recurring.slice().sort((a, b) => a.nextDate.localeCompare(b.nextDate)).map((r) => item(r.name, `${r.type} / ${r.cadence} / next ${fmt(r.nextDate)}`, `<div class="amount ${r.type}">${money(r.amount)}</div><div class="actions"><button class="row-button" onclick="editRecurring('${r.id}')">Edit</button><button class="row-button danger" onclick="deleteRecurring('${r.id}')">Delete</button></div>`, "recurring-item")).join("") || emptyHtml();
@@ -345,8 +390,8 @@ function resetAll() { resetQuick(); resetBudget(); resetAccount(); resetUser(); 
 function resetQuick() { el.quickDate.value = today; el.quickType.value = "expense"; el.quickAmount.value = ""; el.quickDescription.value = ""; }
 function resetBudget() { el.budgetId.value = ""; el.budgetCategory.value = ""; el.budgetLimit.value = ""; el.budgetPeriod.value = "month"; el.budgetGroup.value = "expense"; el.budgetSubmitLabel.textContent = "Save Budget"; }
 function resetAccount() { el.accountId.value = ""; el.accountName.value = ""; el.accountType.value = "asset"; el.accountValue.value = ""; el.accountOwed.value = ""; el.accountBalance.value = ""; el.accountSubmitLabel.textContent = "Save Account"; }
-function resetUser() { el.userId.value = ""; el.userName.value = ""; el.userEmail.value = ""; el.userPassword.value = ""; el.userPasswordConfirm.value = ""; el.userSubmitLabel.textContent = "Add User"; }
-function resetBook() { el.bookId.value = ""; el.bookName.value = ""; el.bookOwner.value = state.activeUserId; el.bookSubmitLabel.textContent = "Add Book"; }
+function resetUser() { el.userId.value = ""; el.userName.value = ""; el.userEmail.value = ""; el.userRole.value = "user"; el.userPassword.value = ""; el.userPasswordConfirm.value = ""; el.userSubmitLabel.textContent = "Add User"; }
+function resetBook() { el.bookId.value = ""; el.bookName.value = ""; el.bookSubmitLabel.textContent = "Update Book"; }
 function resetRecurring() { el.recurringId.value = ""; el.recurringName.value = ""; el.recurringType.value = "expense"; el.recurringAmount.value = ""; el.recurringCadence.value = "monthly"; el.recurringNextDate.value = today; el.recurringSubmitLabel.textContent = "Save Recurring"; }
 function resetTxn() { el.transactionId.value = ""; el.txnDate.value = today; el.txnType.value = "expense"; el.txnPayee.value = ""; el.txnAccount.value = ""; el.txnToAccount.value = ""; el.txnCategory.value = L().budgets[0]?.category || "Other"; el.txnAmount.value = ""; el.txnDescription.value = ""; el.txnNotes.value = ""; el.txnPayPeriod.value = "none"; el.txnCleared.checked = false; el.splitRows.innerHTML = ""; el.txnSubmitLabel.textContent = "Save Transaction"; }
 
@@ -416,25 +461,26 @@ async function saveUser(e) {
   const old = state.users.find((x) => x.id === el.userId.value);
   const password = el.userPassword.value;
   const confirm = el.userPasswordConfirm.value;
-  const u = user({ id: el.userId.value || id(), name: el.userName.value.trim(), email: el.userEmail.value.trim() });
+  const u = user({ id: el.userId.value || id(), name: el.userName.value.trim(), email: el.userEmail.value.trim(), role: el.userRole.value });
   if (!u.name || !u.email) return note("Add a name and login username.");
   if (!old && !password) return note("Add a password for the new login.");
   if (password && password.length < 8) return note("Use at least 8 characters for passwords.");
   if (password !== confirm) return note("Passwords do not match.");
-  const authSaved = await saveAuthUser(old?.email || u.email, u.email, password);
+  if (old?.role === "admin" && u.role !== "admin" && state.users.filter((x) => x.role === "admin").length < 2) return note("Keep at least one admin.");
+  const authSaved = await saveAuthUser(old?.email || u.email, u.email, password, u.role);
   if (!authSaved) return;
   record();
-  if (!el.userId.value) { const b = book({ name: `${u.name}'s Budget`, ownerUserId: u.id }, u.id); state.users.push(u); state.books.push(b); state.ledgers[b.id] = ledger(); }
-  else upsert(state.users, u);
+  if (!el.userId.value) { state.users.push(u); ensureUserBook(u); }
+  else { upsert(state.users, u); ensureUserBook(u); }
   save();
   resetUser();
   render();
   note("User saved.");
 }
-function editUser(id) { const u = state.users.find((x) => x.id === id); if (!u) return; el.userId.value = u.id; el.userName.value = u.name; el.userEmail.value = u.email; el.userPassword.value = ""; el.userPasswordConfirm.value = ""; el.userSubmitLabel.textContent = "Update User"; showTab("settings"); }
-async function saveAuthUser(previousUsername, username, password) {
+function editUser(id) { const u = state.users.find((x) => x.id === id); if (!u) return; el.userId.value = u.id; el.userName.value = u.name; el.userEmail.value = u.email; el.userRole.value = u.role; el.userPassword.value = ""; el.userPasswordConfirm.value = ""; el.userSubmitLabel.textContent = "Update User"; showTab("settings"); }
+async function saveAuthUser(previousUsername, username, password, role) {
   try {
-    const res = await fetch("/api/auth/users", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ previousUsername, username, password }) });
+    const res = await fetch("/api/auth/users", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ previousUsername, username, password, role }) });
     if (res.ok) return true;
     const body = await res.json().catch(() => ({}));
     note(body.message || "Login user could not be saved.");
@@ -448,13 +494,10 @@ async function deleteAuthUser(username) {
     return res.ok;
   } catch { return false; }
 }
-async function deleteUser(id) { if (state.users.length < 2) return note("Keep at least one user."); if (confirm("Delete user and owned books?")) { record(); const removed = state.users.find((u) => u.id === id); const owned = state.books.filter((b) => b.ownerUserId === id).map((b) => b.id); state.users = state.users.filter((u) => u.id !== id); state.books = state.books.filter((b) => b.ownerUserId !== id).map((b) => ({ ...b, sharedUserIds: b.sharedUserIds.filter((x) => x !== id) })); owned.forEach((x) => delete state.ledgers[x]); state.activeUserId = state.users[0].id; ensureAccess(); save(); await deleteAuthUser(removed?.email); render(); } }
-function saveBook(e) { e.preventDefault(); const b = book({ id: el.bookId.value || id(), name: el.bookName.value.trim(), ownerUserId: el.bookOwner.value }, state.activeUserId); if (!b.name) return; record(); if (!el.bookId.value) { state.books.push(b); state.ledgers[b.id] = ledger(); state.activeBookId = b.id; } else upsert(state.books, { ...b, sharedUserIds: currentBook().sharedUserIds.filter((x) => x !== b.ownerUserId) }); save(); resetBook(); render(); }
-function editBook(id) { const b = state.books.find((x) => x.id === id); if (!b) return; el.bookId.value = b.id; el.bookName.value = b.name; el.bookOwner.value = b.ownerUserId; el.bookSubmitLabel.textContent = "Update Book"; showTab("settings"); }
+async function deleteUser(id) { if (state.users.length < 2) return note("Keep at least one user."); const removed = state.users.find((u) => u.id === id); if (removed?.role === "admin" && state.users.filter((x) => x.role === "admin").length < 2) return note("Keep at least one admin."); if (confirm("Delete user and owned book?")) { const authDeleted = await deleteAuthUser(removed?.email); if (!authDeleted) return note("Login user could not be deleted."); record(); const owned = state.books.filter((b) => b.ownerUserId === id).map((b) => b.id); state.users = state.users.filter((u) => u.id !== id); state.books = state.books.filter((b) => b.ownerUserId !== id); owned.forEach((x) => delete state.ledgers[x]); state.activeUserId = state.users[0].id; ensureAccess(); save(); render(); } }
+function saveBook(e) { e.preventDefault(); const existing = state.books.find((x) => x.id === el.bookId.value); if (!existing) return note("Choose a book to edit first."); const name = el.bookName.value.trim(); if (!name) return; record(); existing.name = name; save(); resetBook(); render(); }
+function editBook(id) { const b = state.books.find((x) => x.id === id); if (!b) return; el.bookId.value = b.id; el.bookName.value = b.name; el.bookSubmitLabel.textContent = "Update Book"; showTab("settings"); }
 function deleteBook(id) { if (state.books.length < 2) return note("Keep at least one book."); if (confirm("Delete book?")) { record(); state.books = state.books.filter((b) => b.id !== id); delete state.ledgers[id]; ensureAccess(); save(); render(); } }
-function shareBook(e) { e.preventDefault(); const u = el.shareUserSelect.value, b = currentBook(); if (u && !b.sharedUserIds.includes(u)) { record(); b.sharedUserIds.push(u); save(); render(); } }
-function unshareBook(bid, uid) { const b = state.books.find((x) => x.id === bid); if (b) { record(); b.sharedUserIds = b.sharedUserIds.filter((x) => x !== uid); save(); render(); } }
-
 function openRecurring(r = null) { resetRecurring(); renderOptions(); if (r) { ["Id","Name","Type","Account","ToAccount","Category","Amount","Cadence","NextDate"].forEach((k) => { const key = `recurring${k}`; if (el[key]) el[key].value = r[k.charAt(0).toLowerCase() + k.slice(1)] || ""; }); el.recurringSubmitLabel.textContent = "Update Recurring"; el.recurringDialogTitle.textContent = "Edit Recurring Transaction"; } else { el.recurringDialogTitle.textContent = "Add Recurring Transaction"; } el.recurringDialog.showModal(); }
 function viewRecurringList() { showTab("transactions"); el.recurringList.scrollIntoView({ behavior: "smooth", block: "start" }); }
 function saveRecurring(e) { e.preventDefault(); const r = recurring({ id: el.recurringId.value || id(), name: el.recurringName.value.trim(), type: el.recurringType.value, accountId: el.recurringAccount.value, toAccountId: el.recurringToAccount.value, category: el.recurringCategory.value, amount: el.recurringAmount.value, cadence: el.recurringCadence.value, nextDate: el.recurringNextDate.value }); if (!r.name || !r.amount) return; if (r.type === "transfer" && (!r.accountId || !r.toAccountId || r.accountId === r.toAccountId)) return note("Recurring transfers need two different accounts."); record(); upsert(L().recurring, r); save(); resetRecurring(); el.recurringDialog.close(); render(); viewRecurringList(); }
@@ -580,11 +623,12 @@ function record() { undo.push(JSON.stringify(state)); if (undo.length > 5) undo.
 function restore(s) { state = normalize(JSON.parse(s)); syncMonth(state.currentMonth); document.body.dataset.theme = state.theme; save(); render(); }
 function undoLast() { if (undo.length) { redo.push(JSON.stringify(state)); restore(undo.pop()); } }
 function redoLast() { if (redo.length) { undo.push(JSON.stringify(state)); restore(redo.pop()); } }
-function exportJson() { download(new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }), `budget-ledger-backup-${stamp()}.json`); }
+function exportState() { return isAdmin() ? state : { version: state.version, user: currentUser(), book: currentBook(), ledger: L() }; }
+function exportJson() { download(new Blob([JSON.stringify(exportState(), null, 2)], { type: "application/json" }), `budget-ledger-backup-${stamp()}.json`); }
 function exportCsv() { const rows = [["book","date","type","payee","description","account","toAccount","category","amount","cleared","reconciled","notes"], ...L().transactions.map((t) => [currentBook().name,t.date,t.type,t.payee,t.description,L().accounts.find((a) => a.id === t.accountId)?.name || "",L().accounts.find((a) => a.id === t.toAccountId)?.name || "",t.category,t.amount,t.cleared,t.reconciled,t.notes])]; download(new Blob([rows.map((r) => r.map(csv).join(",")).join("\n")], { type: "text/csv" }), `budget-ledger-${stamp()}.csv`); }
-async function importJson(e) { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; try { const next = normalize(JSON.parse(await f.text())); if (confirm("Replace current ledger data?")) { record(); state = next; save(); render(); } } catch { note("Could not import JSON."); } }
+async function importJson(e) { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; try { const imported = JSON.parse(await f.text()); if (confirm(isAdmin() ? "Replace current ledger data?" : "Replace your current book data?")) { record(); if (isAdmin()) state = normalize(imported); else state.ledgers[state.activeBookId] = ledger(imported.ledger || imported); ensureLoginIdentity(); save(); render(); } } catch { note("Could not import JSON."); } }
 async function importCsv(e) { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; const rows = parseCsv(await f.text()); if (rows.length < 2) return; const head = rows[0].map((x) => x.toLowerCase()), get = (r, k) => r[head.indexOf(k)] || ""; record(); rows.slice(1).forEach((r) => L().transactions.push(txn({ date: get(r,"date"), type: get(r,"type"), payee: get(r,"payee"), description: get(r,"description"), category: get(r,"category"), amount: get(r,"amount"), cleared: /true|yes|1/i.test(get(r,"cleared")) }))); save(); render(); }
-async function postDownload(url, name) { try { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }); if (!r.ok) throw 0; download(await r.blob(), name); } catch { note("Export failed."); } }
+async function postDownload(url, name) { try { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(exportState()) }); if (!r.ok) throw 0; download(await r.blob(), name); } catch { note("Export failed."); } }
 
 function progress(b, spent) { const l = limit(b), pct = l ? Math.min(spent / l * 100, 100) : 0; return `<article class="progress-item"><div class="item-row"><div><div class="item-title">${esc(b.category)}</div><div class="item-meta">Budgeted ${money(l)} / Spent ${money(spent)}</div></div><div class="amount ${l - spent < 0 ? "expense" : "income"}">${money(l - spent)}</div></div><div class="progress-track"><div class="progress-fill ${pct >= 100 ? "over" : pct >= 80 ? "warning" : ""}" style="width:${pct}%"></div></div></article>`; }
 function bar(label, amount, max) { return `<article class="progress-item"><div class="item-row"><div class="item-title">${esc(label)}</div><div class="amount expense">${money(amount)}</div></div><div class="progress-track"><div class="progress-fill warning" style="width:${Math.max(amount / max * 100, 8)}%"></div></div></article>`; }
@@ -606,4 +650,4 @@ function parseCsv(text) { const rows = []; let row = [], cell = "", q = false; f
 function download(blob, name) { const a = document.createElement("a"), url = URL.createObjectURL(blob); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
 function note(msg) { clearTimeout(toastTimer); el.toast.textContent = msg; el.toast.classList.add("is-visible"); toastTimer = setTimeout(() => el.toast.classList.remove("is-visible"), 2600); }
 
-Object.assign(window, { editTransaction, deleteTransaction, editBudget, deleteBudget, editAccount, deleteAccount, showRegister, toggleCleared, editUser, deleteUser, editBook, deleteBook, unshareBook, editRecurring, deleteRecurring });
+Object.assign(window, { editTransaction, deleteTransaction, editBudget, deleteBudget, editAccount, deleteAccount, showRegister, toggleCleared, editUser, deleteUser, editBook, deleteBook, editRecurring, deleteRecurring });

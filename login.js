@@ -19,14 +19,13 @@ form.addEventListener("submit", async (event) => {
       }),
     });
 
-    if (response.ok) {
-      sessionStorage.removeItem("budget-ledger-open-selection");
-      window.location.assign("/");
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      message.textContent = result.message || "Unable to sign in.";
       return;
     }
 
-    const result = await response.json().catch(() => ({}));
-    message.textContent = result.message || "Unable to sign in.";
+    window.location.assign("/");
   } catch {
     message.textContent = "Unable to reach the server.";
   } finally {

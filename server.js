@@ -52,7 +52,7 @@ function readAuthConfig() {
   const envIterations = Number(process.env.AUTH_PASSWORD_ITERATIONS || 210000);
 
   if (envUsername && envPassword) {
-    return normalizeAuthUsers({ users: [createCredential(envUsername, envPassword, envIterations)] });
+    return normalizeAuthUsers({ users: [createCredential(envUsername, envPassword, envIterations, "admin")] });
   }
 
   if (envUsername && envHash && envSalt) {
@@ -62,6 +62,7 @@ function readAuthConfig() {
       salt: envSalt,
       iterations: envIterations,
       digest: process.env.AUTH_PASSWORD_DIGEST || "sha256",
+      role: "admin",
     }] });
   }
 
@@ -75,6 +76,7 @@ function readAuthConfig() {
         salt: saved.salt,
         iterations: Number(saved.iterations || 210000),
         digest: saved.digest || "sha256",
+        role: "admin",
       }] });
     }
   } catch {
@@ -89,22 +91,24 @@ function readAuthConfig() {
 function normalizeAuthUsers(input = {}) {
   const users = (Array.isArray(input.users) ? input.users : [])
     .filter((user) => user && user.username && user.hash && user.salt)
-    .map((user) => ({
+    .map((user, index) => ({
       username: String(user.username).trim(),
       salt: String(user.salt),
       iterations: Number(user.iterations || 210000),
       digest: user.digest || "sha256",
       hash: String(user.hash),
+      role: user.role === "user" ? "user" : index === 0 ? "admin" : "user",
     }));
 
   if (!users.length) throw new Error("Authentication has no configured users.");
   return { users };
 }
 
-function createCredential(username, password, iterations) {
+function createCredential(username, password, iterations, role = "user") {
   const salt = crypto.randomBytes(16).toString("hex");
   return {
     username: String(username).trim(),
+    role: role === "admin" ? "admin" : "user",
     salt,
     iterations,
     digest: "sha256",
@@ -135,7 +139,7 @@ function writeAuthConfig() {
 }
 
 function publicAuthUsers() {
-  return auth.users.map((user) => ({ username: user.username }));
+  return auth.users.map((user) => ({ username: user.username, role: user.role }));
 }
 
 function isSecureRequest(req) {
@@ -225,9 +229,11 @@ function getSession(req) {
 }
 
 function createSession(req, res, username) {
+  const user = auth.users.find((entry) => entry.username === username);
   const token = crypto.randomBytes(32).toString("base64url");
   sessions.set(token, {
     username,
+    role: user?.role || "user",
     expiresAt: Date.now() + sessionTtlMs,
   });
   res.setHeader("Set-Cookie", buildCookie(req, token, Math.floor(sessionTtlMs / 1000)));
@@ -327,6 +333,8 @@ async function handleSaveAuthUser(req, res) {
     const username = String(payload.username || "").trim();
     const previousUsername = String(payload.previousUsername || username).trim();
     const password = String(payload.password || "");
+    const role = payload.role === "admin" ? "admin" : "user";
+    const previousUsers = auth.users.map((user) => ({ ...user }));
 
     if (!username) {
       sendJson(req, res, 400, { ok: false, message: "Login username is required." });
@@ -346,11 +354,17 @@ async function handleSaveAuthUser(req, res) {
     }
 
     if (existingIndex === -1) {
-      auth.users.push(createCredential(username, password, 210000));
+      auth.users.push(createCredential(username, password, 210000, role));
     } else if (password) {
-      auth.users[existingIndex] = createCredential(username, password, auth.users[existingIndex].iterations || 210000);
+      auth.users[existingIndex] = createCredential(username, password, auth.users[existingIndex].iterations || 210000, role);
     } else {
-      auth.users[existingIndex] = { ...auth.users[existingIndex], username };
+      auth.users[existingIndex] = { ...auth.users[existingIndex], username, role };
+    }
+
+    if (!auth.users.some((user) => user.role === "admin")) {
+      auth.users = previousUsers;
+      sendJson(req, res, 400, { ok: false, message: "Keep at least one admin login user." });
+      return;
     }
 
     writeAuthConfig();
@@ -378,6 +392,11 @@ async function handleDeleteAuthUser(req, res) {
     const nextUsers = auth.users.filter((user) => user.username !== username);
     if (nextUsers.length === auth.users.length) {
       sendJson(req, res, 404, { ok: false, message: "Login user was not found." });
+      return;
+    }
+
+    if (!nextUsers.some((user) => user.role === "admin")) {
+      sendJson(req, res, 400, { ok: false, message: "Keep at least one admin login user." });
       return;
     }
 
@@ -595,14 +614,14 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === "/api/session" && req.method === "GET") {
     if (!auth) {
-      sendJson(req, res, 200, { authenticated: true, username: "local" });
+      sendJson(req, res, 200, { authenticated: true, username: "local", role: "admin" });
       return;
     }
     if (!session) {
       sendJson(req, res, 401, { authenticated: false });
       return;
     }
-    sendJson(req, res, 200, { authenticated: true, username: session.username });
+    sendJson(req, res, 200, { authenticated: true, username: session.username, role: session.role || "user" });
     return;
   }
 
@@ -623,16 +642,28 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/api/auth/users" && req.method === "GET") {
+    if (auth && session.role !== "admin") {
+      sendJson(req, res, 403, { ok: false, message: "Admin access required." });
+      return;
+    }
     await handleGetAuthUsers(req, res);
     return;
   }
 
   if (pathname === "/api/auth/users" && req.method === "PUT") {
+    if (auth && session.role !== "admin") {
+      sendJson(req, res, 403, { ok: false, message: "Admin access required." });
+      return;
+    }
     await handleSaveAuthUser(req, res);
     return;
   }
 
   if (pathname === "/api/auth/users" && req.method === "DELETE") {
+    if (auth && session.role !== "admin") {
+      sendJson(req, res, 403, { ok: false, message: "Admin access required." });
+      return;
+    }
     await handleDeleteAuthUser(req, res);
     return;
   }

@@ -297,6 +297,24 @@ button {
   padding: 8px 0 18px;
 }
 
+.brand-logo {
+  display: block;
+  width: auto;
+  object-fit: contain;
+}
+
+.app-logo {
+  flex: 0 1 420px;
+  max-width: min(420px, 34vw);
+  max-height: 82px;
+}
+
+.login-logo {
+  width: min(100%, 380px);
+  max-height: 150px;
+  margin: 0 auto 24px;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--teal-dark);
@@ -738,6 +756,20 @@ textarea:focus {
   line-height: 1.45;
 }
 
+.help-lede {
+  max-width: 920px;
+  margin-bottom: 18px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.walkthrough-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+}
+
 .help-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -792,6 +824,25 @@ textarea:focus {
   border-radius: 999px;
   background: var(--ink);
   opacity: 0.88;
+}
+
+.annotated-shot {
+  position: relative;
+}
+
+.annotated-shot b,
+.annotated-shot em {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--teal-dark);
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .shot-toolbar,
@@ -1387,10 +1438,6 @@ th {
   padding: 24px;
 }
 
-.login-panel h1 {
-  margin-bottom: 24px;
-}
-
 .login-form {
   display: grid;
   gap: 14px;
@@ -1412,6 +1459,11 @@ th {
 
   .topbar {
     display: grid;
+  }
+
+  .app-logo {
+    max-width: 360px;
+    width: min(100%, 360px);
   }
 
   .summary-grid {
@@ -1436,6 +1488,11 @@ th {
 @media (max-width: 640px) {
   .app-shell {
     padding: 14px;
+  }
+
+  .app-logo,
+  .login-logo {
+    max-width: 100%;
   }
 
   .summary-grid,

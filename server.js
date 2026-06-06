@@ -28,7 +28,7 @@ const contentTypes = {
   ".ico": "image/x-icon",
 };
 
-const publicPaths = new Set(["/login", "/login.html", "/login.js", "/styles.css"]);
+const publicPaths = new Set(["/login", "/login.html", "/login.js", "/styles.css", "/assets/jess-simple-budget-ledger-logo.png"]);
 const sessions = new Map();
 const sessionTtlMs = 1000 * 60 * 60 * 12;
 const sessionCookie = "budget_session";
@@ -463,31 +463,12 @@ function serveFile(req, res, filePath) {
 
 async function handleWorkbookExport(req, res) {
   try {
-    const state = await readExportBody(req);
-    const outputDir = path.join(os.tmpdir(), "budget-ledger-exports");
-    fs.mkdirSync(outputDir, { recursive: true });
-    const statePath = path.join(outputDir, `budget-state-${Date.now()}.json`);
-    const outputPath = path.join(outputDir, `budget-ledger-${Date.now()}.xlsx`);
-    fs.writeFileSync(statePath, state);
-
-    const pythonPath =
-      process.env.PYTHON_EXE ||
-      path.join(
-        process.env.USERPROFILE || "",
-        ".cache",
-        "codex-runtimes",
-        "codex-primary-runtime",
-        "dependencies",
-        "python",
-        "python.exe",
-      );
-    const scriptPath = path.join(root, "scripts", "export_workbook.py");
-    await runCommand(pythonPath, [scriptPath, statePath, outputPath], root);
-    const data = fs.readFileSync(outputPath);
+    const raw = await readExportBody(req);
+    const state = JSON.parse(raw || "{}");
+    const data = buildWorkbook(state);
     send(req, res, 200, data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", {
       "Content-Disposition": 'attachment; filename="budget-ledger-export.xlsx"',
     });
-    scheduleCleanup([statePath, outputPath]);
   } catch (error) {
     sendJson(req, res, 500, { ok: false, message: error.message || "Workbook export failed." });
   }
@@ -496,37 +477,192 @@ async function handleWorkbookExport(req, res) {
 async function handleBackupZip(req, res) {
   try {
     const state = await readExportBody(req);
-    const outputDir = path.join(os.tmpdir(), "budget-ledger-exports");
-    const stagingDir = path.join(outputDir, `backup-${Date.now()}`);
-    const zipPath = `${stagingDir}.zip`;
-    fs.mkdirSync(stagingDir, { recursive: true });
-
+    const files = {};
     for (const name of [
       "index.html",
       "styles.css",
       "app.js",
       "server.js",
-      "launch-budget-app.bat",
+      "login.html",
+      "login.js",
       "budget-app.config.json",
-      "Budget worksheet template (2).xlsx",
+      "package.json",
+      "package-lock.json",
+      "render.yaml",
+      "README.md",
+      "assets/jess-simple-budget-ledger-logo.png",
     ]) {
       const source = path.join(root, name);
-      if (fs.existsSync(source)) fs.copyFileSync(source, path.join(stagingDir, name));
+      if (fs.existsSync(source)) files[name] = fs.readFileSync(source);
     }
-    fs.writeFileSync(path.join(stagingDir, "budget-ledger-state.json"), state);
-    await runCommand("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      `Compress-Archive -Path '${stagingDir.replaceAll("'", "''")}\\*' -DestinationPath '${zipPath.replaceAll("'", "''")}' -Force`,
-    ], root);
-    const data = fs.readFileSync(zipPath);
+    files["budget-ledger-state.json"] = Buffer.from(state, "utf8");
+    const data = createZip(files);
     send(req, res, 200, data, "application/zip", {
       "Content-Disposition": 'attachment; filename="budget-ledger-backup.zip"',
     });
-    scheduleCleanup([stagingDir, zipPath]);
   } catch (error) {
     sendJson(req, res, 500, { ok: false, message: error.message || "Backup failed." });
   }
+}
+
+function buildWorkbook(state) {
+  const sheets = workbookSheets(state);
+  const files = {
+    "[Content_Types].xml": contentTypesXml(sheets),
+    "_rels/.rels": '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+    "xl/workbook.xml": workbookXml(sheets),
+    "xl/_rels/workbook.xml.rels": workbookRelsXml(sheets),
+  };
+  sheets.forEach((sheet, index) => {
+    files[`xl/worksheets/sheet${index + 1}.xml`] = worksheetXml(sheet.rows);
+  });
+  return createZip(files);
+}
+
+function workbookSheets(state = {}) {
+  const books = Array.isArray(state.books) ? state.books : [];
+  const ledgers = state.ledgers && typeof state.ledgers === "object" ? state.ledgers : state.ledger ? { [state.book?.id || "book"]: state.ledger } : {};
+  const bookList = books.length ? books : [{ id: state.book?.id || Object.keys(ledgers)[0] || "book", name: state.book?.name || "Budget Book" }];
+  const txnRows = [["Book","Date","Type","Payee","Description","Account","To Account","Category","Amount","Cleared","Reconciled","Notes"]];
+  const accountRows = [["Book","Name","Type","Opening Balance","Current Balance","Statement Date","Statement Balance"]];
+  const budgetRows = [["Book","Category","Group","Period","Limit"]];
+  const recurringRows = [["Book","Name","Type","Account","To Account","Category","Amount","Cadence","Next Date"]];
+  const summaryRows = [["Book","Income","Expenses","Assets","Liabilities","Net Worth","Transactions"]];
+
+  for (const book of bookList) {
+    const ledger = ledgers[book.id] || ledgers[Object.keys(ledgers)[0]] || {};
+    const accounts = Array.isArray(ledger.accounts) ? ledger.accounts : [];
+    const transactions = Array.isArray(ledger.transactions) ? ledger.transactions : [];
+    const accountName = (id) => accounts.find((a) => a.id === id)?.name || "";
+    transactions.forEach((t) => txnRows.push([book.name, t.date, t.type, t.payee, t.description, accountName(t.accountId), accountName(t.toAccountId), t.category, Number(t.amount || 0), !!t.cleared, !!t.reconciled, t.notes]));
+    accounts.forEach((a) => accountRows.push([book.name, a.name, a.type, Number(a.openingBalance || 0), accountBalance(a, transactions, accounts), a.statementDate || "", Number(a.statementBalance || 0)]));
+    (Array.isArray(ledger.budgets) ? ledger.budgets : []).forEach((b) => budgetRows.push([book.name, b.category, b.group, b.period, Number(b.monthlyLimit || 0)]));
+    (Array.isArray(ledger.recurring) ? ledger.recurring : []).forEach((r) => recurringRows.push([book.name, r.name, r.type, accountName(r.accountId), accountName(r.toAccountId), r.category, Number(r.amount || 0), r.cadence, r.nextDate]));
+    const income = transactions.filter((t) => t.type === "income").reduce((n, t) => n + Number(t.amount || 0), 0);
+    const expenses = transactions.filter((t) => t.type === "expense").reduce((n, t) => n + Number(t.amount || 0), 0);
+    const assets = accounts.filter((a) => a.type !== "liability").reduce((n, a) => n + accountBalance(a, transactions, accounts), 0);
+    const liabilities = accounts.filter((a) => a.type === "liability").reduce((n, a) => n + accountBalance(a, transactions, accounts), 0);
+    summaryRows.push([book.name, income, expenses, assets, liabilities, assets - liabilities, transactions.length]);
+  }
+
+  return [
+    { name: "Summary", rows: summaryRows },
+    { name: "Transactions", rows: txnRows },
+    { name: "Accounts", rows: accountRows },
+    { name: "Budgets", rows: budgetRows },
+    { name: "Recurring", rows: recurringRows },
+  ];
+}
+
+function accountBalance(account, transactions, accounts) {
+  return Number(account.openingBalance || 0) + transactions.reduce((total, t) => total + accountDelta(t, account.id, accounts), 0);
+}
+
+function accountDelta(t, accountId, accounts) {
+  const account = accounts.find((a) => a.id === accountId);
+  const amount = Number(t.amount || 0);
+  if (!account) return 0;
+  if (t.type === "income" && t.accountId === accountId) return account.type === "liability" ? -amount : amount;
+  if (t.type === "expense" && t.accountId === accountId) return account.type === "liability" ? amount : -amount;
+  if (t.type === "transfer" && t.accountId === accountId) return account.type === "liability" ? amount : -amount;
+  if (t.type === "transfer" && t.toAccountId === accountId) return account.type === "liability" ? -amount : amount;
+  return 0;
+}
+
+function contentTypesXml(sheets) {
+  const sheetOverrides = sheets.map((_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheetOverrides}</Types>`;
+}
+
+function workbookXml(sheets) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((sheet, index) => `<sheet name="${xml(sheet.name.slice(0, 31))}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("")}</sheets></workbook>`;
+}
+
+function workbookRelsXml(sheets) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("")}</Relationships>`;
+}
+
+function worksheetXml(rows) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows.map((row, r) => `<row r="${r + 1}">${row.map((value, c) => cellXml(value, r + 1, c)).join("")}</row>`).join("")}</sheetData></worksheet>`;
+}
+
+function cellXml(value, rowNumber, colIndex) {
+  const ref = `${columnName(colIndex)}${rowNumber}`;
+  if (typeof value === "number" && Number.isFinite(value)) return `<c r="${ref}"><v>${value}</v></c>`;
+  return `<c r="${ref}" t="inlineStr"><is><t>${xml(value)}</t></is></c>`;
+}
+
+function columnName(index) {
+  let n = index + 1, out = "";
+  while (n > 0) {
+    const m = (n - 1) % 26;
+    out = String.fromCharCode(65 + m) + out;
+    n = Math.floor((n - m) / 26);
+  }
+  return out;
+}
+
+function xml(value) {
+  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function createZip(files) {
+  const entries = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(files)) {
+    const data = Buffer.isBuffer(content) ? content : Buffer.from(String(content), "utf8");
+    const nameBuffer = Buffer.from(name.replaceAll("\\", "/"), "utf8");
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuffer.length, 26);
+    entries.push(local, nameBuffer, data);
+
+    const dir = Buffer.alloc(46);
+    dir.writeUInt32LE(0x02014b50, 0);
+    dir.writeUInt16LE(20, 4);
+    dir.writeUInt16LE(20, 6);
+    dir.writeUInt16LE(0, 8);
+    dir.writeUInt16LE(0, 10);
+    dir.writeUInt16LE(0, 12);
+    dir.writeUInt16LE(0, 14);
+    dir.writeUInt32LE(crc, 16);
+    dir.writeUInt32LE(data.length, 20);
+    dir.writeUInt32LE(data.length, 24);
+    dir.writeUInt16LE(nameBuffer.length, 28);
+    dir.writeUInt32LE(offset, 42);
+    central.push(dir, nameBuffer);
+    offset += local.length + nameBuffer.length + data.length;
+  }
+  const centralSize = central.reduce((n, b) => n + b.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(files).length, 8);
+  end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...entries, ...central, end]);
+}
+
+const crcTable = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function emptySavedState() {
@@ -719,7 +855,7 @@ function openExistingAppOrReport(error) {
       if (body.length > 20000) req.destroy();
     });
     res.on("end", () => {
-      if (body.includes("<title>Budget Ledger</title>")) {
+      if (body.includes("<title>Jess's Simple Household Budget Ledger</title>")) {
         console.log(`Budget Ledger is already running at ${url}`);
         if (shouldOpenBrowser) openBrowser(url);
         process.exit(0);

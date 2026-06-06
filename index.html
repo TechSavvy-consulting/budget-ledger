@@ -3,16 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Budget Ledger</title>
+    <title>Jess's Simple Household Budget Ledger</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Simple household budget</p>
-          <h1>Budget Ledger</h1>
-        </div>
+        <img class="brand-logo app-logo" src="assets/jess-simple-budget-ledger-logo.png" alt="Jess's Simple Household Budget Ledger" />
         <div class="topbar-actions">
           <div class="session-label">
             <span>Logged in</span>
@@ -99,7 +96,7 @@
             <strong id="remainderTotal">$0</strong>
           </article>
           <article class="metric aum">
-            <span>Net Worth (AUM)</span>
+            <span>Net Worth</span>
             <strong id="aumTotal">$0</strong>
           </article>
         </section>
@@ -147,6 +144,20 @@
                   </label>
                   <button class="primary-button wide" type="submit">Add Simple Transaction</button>
                 </form>
+          </section>
+              <section class="tool-panel">
+                <div class="section-heading">
+                  <h2>Budget Warnings</h2>
+                  <span class="quiet-pill">Watch list</span>
+                </div>
+                <div id="budgetWarnings" class="budget-progress"></div>
+              </section>
+              <section class="tool-panel">
+                <div class="section-heading">
+                  <h2>Upcoming Bills & Income</h2>
+                  <span class="quiet-pill">Next 5</span>
+                </div>
+                <div id="homeUpcoming" class="budget-progress"></div>
               </section>
             </div>
 
@@ -336,7 +347,7 @@
               <strong id="debtTotal">$0</strong>
             </article>
             <article class="metric aum">
-              <span>Net Worth (AUM)</span>
+              <span>Net Worth</span>
               <strong id="netWorthTotal">$0</strong>
             </article>
           </section>
@@ -582,63 +593,82 @@
         <section id="help" class="view">
           <section class="tool-panel help-intro">
             <div class="section-heading">
-              <h2>Budget Ledger Help</h2>
-              <span class="quiet-pill">Simple home ledger workflow</span>
+              <h2>Start Here</h2>
+              <span class="quiet-pill">First month workflow</span>
             </div>
+            <p class="help-lede">This app is a simple home bookkeeping system. Use it to keep one clean record of money coming in, money going out, where the money is, what you owe, and whether your records match the bank.</p>
             <div class="workflow-strip" aria-label="Recommended workflow">
               <article>
-                <strong>1. Set up</strong>
-                <span>Create users, name books, add accounts, and set budget targets.</span>
+                <strong>1. Add accounts</strong>
+                <span>Add checking, savings, credit cards, loans, and important assets. Enter each opening balance once.</span>
               </article>
               <article>
-                <strong>2. Record activity</strong>
-                <span>Add income, expenses, transfers, and recurring transactions as they happen.</span>
+                <strong>2. Set targets</strong>
+                <span>Create budget categories for the things you want to watch, like Housing, Grocery, Fuel, and Insurance.</span>
               </article>
               <article>
-                <strong>3. Review</strong>
-                <span>Use reports, account registers, and reconcile to find missing or uncleared items.</span>
+                <strong>3. Enter activity</strong>
+                <span>Add paychecks, expenses, transfers, card purchases, and repeating bills as transactions.</span>
               </article>
               <article>
-                <strong>4. Protect data</strong>
-                <span>Change your password, export backups, and log out when finished.</span>
+                <strong>4. Reconcile</strong>
+                <span>Compare each bank or credit card statement to the register, then lock matched items when the difference is $0.00.</span>
               </article>
+            </div>
+          </section>
+
+          <section class="tool-panel">
+            <div class="section-heading">
+              <h2>First 10 Minutes</h2>
+              <span class="quiet-pill">Walkthrough</span>
+            </div>
+            <div class="walkthrough-list">
+              <article><strong>1</strong><span>Open Accounts & Assets. Add Checking, Savings, and Credit Card. Use the current real-world balance as the opening balance.</span></article>
+              <article><strong>2</strong><span>Open Budgets. Add targets for Housing, Grocery, Utilities, Fuel, Insurance, Dining, Savings, and Debt Payment.</span></article>
+              <article><strong>3</strong><span>Open Home. Add your paycheck as Income to Checking. Add rent or groceries as Expenses from the account that paid them.</span></article>
+              <article><strong>4</strong><span>For a credit card purchase, add an Expense to the credit card account. For a card payment, add a Transfer from Checking to Credit Card.</span></article>
+              <article><strong>5</strong><span>Open Reports and Accounts & Assets weekly. At statement time, mark items seen at the bank and reconcile the account.</span></article>
             </div>
           </section>
 
           <div class="help-grid">
             <article class="help-card">
-              <figure class="help-shot home-shot" aria-label="Home section screenshot">
+              <figure class="help-shot home-shot annotated-shot" aria-label="Home section screenshot">
+                <b>Home</b>
                 <div class="shot-toolbar"><span></span><span></span><span></span></div>
                 <div class="shot-form">
                   <span></span><span></span><span></span><span></span>
                 </div>
                 <div class="shot-bars"><span style="width:92%"></span><span style="width:58%"></span><span style="width:34%"></span></div>
+                <em>Quick Add</em>
               </figure>
               <div>
                 <h2>Home</h2>
-                <p>Use Home for fast entry and a quick read on budget categories. Quick Add is best for simple income, expenses, and transfers that do not need notes or splits.</p>
+                <p>Use Home for fast entry and a quick read on budget pressure. Quick Add is best for simple income, expenses, and transfers that do not need notes or splits.</p>
                 <ul>
                   <li>Pick the month at the top before reviewing totals.</li>
                   <li>Use Quick Add for day-to-day entries.</li>
-                  <li>Watch Budget Categories for overspending signals.</li>
+                  <li>Use Budget Warnings and Upcoming Bills & Income to decide what needs attention next.</li>
                 </ul>
               </div>
             </article>
 
             <article class="help-card">
-              <figure class="help-shot transactions-shot" aria-label="Transactions section screenshot">
+              <figure class="help-shot transactions-shot annotated-shot" aria-label="Transactions section screenshot">
+                <b>Transactions</b>
                 <div class="shot-toolbar wide"><span></span><span></span><span></span><span></span></div>
                 <div class="shot-table">
                   <span></span><span></span><span></span><span></span>
                 </div>
+                <em>Date filters</em>
               </figure>
               <div>
                 <h2>Transactions</h2>
                 <p>Transactions are the main ledger. Use the date range fields to narrow what you are reviewing, and use Add Recurring for bills, paychecks, and transfers that repeat.</p>
                 <ul>
-                  <li>Expenses debit the selected account.</li>
-                  <li>Income increases the selected account.</li>
-                  <li>Transfers move money between two accounts.</li>
+                  <li>Expenses subtract from cash accounts or increase what you owe on credit cards.</li>
+                  <li>Income adds money to the selected account.</li>
+                  <li>Transfers move money between accounts and do not count as spending.</li>
                 </ul>
               </div>
             </article>
@@ -660,11 +690,13 @@
             </article>
 
             <article class="help-card">
-              <figure class="help-shot accounts-shot" aria-label="Accounts and assets section screenshot">
+              <figure class="help-shot accounts-shot annotated-shot" aria-label="Accounts and assets section screenshot">
+                <b>Register</b>
                 <div class="shot-metrics"><span></span><span></span><span></span></div>
                 <div class="shot-table checks">
                   <span></span><span></span><span></span><span></span>
                 </div>
+                <em>Seen at bank</em>
               </figure>
               <div>
                 <h2>Accounts & Assets</h2>
@@ -673,6 +705,26 @@
                   <li>Check In Bank when a transaction appears at your bank.</li>
                   <li>Enter statement date and balance in Reconcile.</li>
                   <li>Reconcile only when the difference reaches $0.00.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot accounts-shot annotated-shot" aria-label="Credit card workflow screenshot">
+                <b>Card Flow</b>
+                <div class="shot-table checks">
+                  <span></span><span></span><span></span><span></span>
+                </div>
+                <div class="shot-toolbar"><span></span><span></span><span></span></div>
+                <em>Expense then transfer</em>
+              </figure>
+              <div>
+                <h2>Credit Cards & Loans</h2>
+                <p>Record the thing you bought as the expense. Record the payment as a transfer. This prevents double-counting.</p>
+                <ul>
+                  <li>Grocery on card: Expense from Credit Card, category Grocery.</li>
+                  <li>Card payment: Transfer from Checking to Credit Card.</li>
+                  <li>Loan payment: split principal/interest if you need detailed tracking.</li>
                 </ul>
               </div>
             </article>
@@ -710,17 +762,58 @@
             </article>
 
             <article class="help-card">
-              <figure class="help-shot backup-shot" aria-label="Import and export screenshot">
+              <figure class="help-shot backup-shot annotated-shot" aria-label="Import and export screenshot">
+                <b>Backup</b>
                 <div class="shot-button-grid"><span></span><span></span><span></span><span></span></div>
                 <div class="shot-bars"><span style="width:66%"></span><span style="width:42%"></span></div>
+                <em>Export first</em>
               </figure>
               <div>
                 <h2>Import & Export</h2>
-                <p>Export JSON for a restorable backup, CSV for transaction review, or Spreadsheet for workbook-style reporting. Imports replace the relevant data, so export first when you are unsure.</p>
+                <p>Export JSON for a restorable backup, CSV for transaction review, Spreadsheet for workbook-style reporting, or Backup App Folder for app files plus current data.</p>
                 <ul>
-                  <li>Admins export the full app state.</li>
-                  <li>Users export only their own book data.</li>
-                  <li>Keep periodic JSON backups outside the app.</li>
+                  <li>JSON is the safest data restore format. Export before importing.</li>
+                  <li>CSV is for spreadsheet review and transaction import, not a full system backup.</li>
+                  <li>Spreadsheet export creates workbook tabs for transactions, accounts, budgets, and recurring items.</li>
+                  <li>Backup App Folder downloads the app files and a JSON state file together.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot accounts-shot annotated-shot" aria-label="Reconcile walkthrough screenshot">
+                <b>Reconcile</b>
+                <div class="shot-table checks"><span></span><span></span><span></span><span></span></div>
+                <div class="shot-metrics"><span></span><span></span><span></span></div>
+                <em>$0.00 difference</em>
+              </figure>
+              <div>
+                <h2>Reconcile a Statement</h2>
+                <p>Reconciliation proves your ledger matches the bank or credit card statement for a specific ending date.</p>
+                <ul>
+                  <li>Select the account and statement date.</li>
+                  <li>Mark In Bank for every statement-cleared transaction.</li>
+                  <li>Enter the statement balance and reconcile only when the difference is $0.00.</li>
+                  <li>Reconciled transactions become locked history.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="help-card">
+              <figure class="help-shot settings-shot annotated-shot" aria-label="Common mistakes screenshot">
+                <b>Watch Outs</b>
+                <div class="shot-form compact"><span></span><span></span><span></span></div>
+                <div class="shot-toolbar"><span></span><span></span><span></span></div>
+                <em>Common mistakes</em>
+              </figure>
+              <div>
+                <h2>Common Mistakes</h2>
+                <p>Most ledger problems come from double-counting, missing accounts, or importing over good data.</p>
+                <ul>
+                  <li>Do not enter a credit card payment as both an expense and a transfer.</li>
+                  <li>Set opening balances once, then let transactions change balances.</li>
+                  <li>Use transfers for savings moves and card payments.</li>
+                  <li>Export JSON before importing or deleting anything.</li>
                 </ul>
               </div>
             </article>

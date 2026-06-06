@@ -19,7 +19,7 @@ const el = {};
   "logoutBtn",
   "addTransactionBtn","transactionAddBtn","recurringAddBtn","viewRecurringBtn","undoBtn","redoBtn","incomeTotal","expenseTotal","remainderTotal","aumTotal",
   "quickTransactionForm","quickClearBtn","quickDate","quickType","quickCategory","quickAccount","quickToAccount","quickAmount","quickDescription",
-  "budgetProgress","dailyAverage","dailyBars","transactionStartDate","transactionEndDate","transactionThisMonthBtn","searchTransactions","filterType","transactionRows","budgetForm","budgetId","budgetCategory",
+  "budgetProgress","budgetWarnings","homeUpcoming","dailyAverage","dailyBars","transactionStartDate","transactionEndDate","transactionThisMonthBtn","searchTransactions","filterType","transactionRows","budgetForm","budgetId","budgetCategory",
   "budgetLimit","budgetPeriod","budgetGroup","budgetSubmitLabel","resetBudgetForm","budgetList","budgetCount","reportPeriodLabel","reportIncome",
   "reportExpense","reportRemaining","reportNetWorth","reportCategories","reportBudgets","reportAccounts","reportUpcoming","reportForecast",
   "assetTotal","debtTotal","netWorthTotal","accountForm","accountId","accountName","accountType","accountValue","accountOwed","accountBalance",
@@ -95,7 +95,7 @@ function bind() {
   el.bookForm.onsubmit = saveBook;
   el.resetBookForm.onclick = resetBook;
   el.passwordForm.onsubmit = changeOwnPassword;
-  el.themeSelect.onchange = () => { record(); state.theme = el.themeSelect.value; document.body.dataset.theme = state.theme; save(); };
+  el.themeSelect.onchange = () => { record(); state.theme = el.themeSelect.value; document.body.dataset.theme = state.theme; save(); if (syncReady) syncServer(); };
   el.exportCsvBtn.onclick = exportCsv;
   el.exportJsonBtn.onclick = exportJson;
   el.importJsonBtn.onclick = () => el.importJsonFile.click();
@@ -139,7 +139,7 @@ function load() {
 function normalize(input = {}) {
   const b = base();
   const s = { ...b, ...input };
-  s.theme = ["classic", "slate", "forest", "berry"].includes(s.theme) ? s.theme : "classic";
+  s.theme = themes().includes(s.theme) ? s.theme : "classic";
   s.periodMode = ["week", "month", "year"].includes(s.periodMode) ? s.periodMode : "month";
   s.users = Array.isArray(s.users) && s.users.length ? s.users.map(user) : b.users;
   s.books = Array.isArray(s.books) && s.books.length ? s.books.map((x) => book(x, s.users[0].id)) : b.books;
@@ -296,6 +296,7 @@ function renderSummary() {
   const p = periodTxns(), inc = sum(p.filter((x) => x.type === "income")), exp = sum(p.filter((x) => x.type === "expense")), nw = totals();
   el.incomeTotal.textContent = money(inc); el.expenseTotal.textContent = money(exp); el.remainderTotal.textContent = money(inc - exp); el.aumTotal.textContent = money(nw.netWorth);
   el.assetTotal.textContent = money(nw.assets); el.debtTotal.textContent = money(nw.liabilities); el.netWorthTotal.textContent = money(nw.netWorth); el.accountSummary.textContent = `${money(nw.netWorth)} net`;
+  renderHomeWarnings(p);
   const buckets = buildBuckets(), max = Math.max(...buckets.map((x) => x.amount), 1), spent = sum(buckets);
   el.dailyAverage.textContent = `${money(spent / Math.max(buckets.length, 1))}${state.periodMode === "year" ? "/month" : "/day"}`;
   el.dailyBars.style.gridTemplateColumns = `repeat(${buckets.length}, minmax(7px, 1fr))`;
@@ -339,10 +340,21 @@ function renderReports() {
   el.reportBudgets.innerHTML = L().budgets.map((b) => progress(b, byCategory(p.filter((x) => x.type === "expense"))[b.category] || 0)).join("") || emptyHtml();
   const accountHtml = L().accounts.map((a) => item(a.name, a.type, `<div class="amount ${a.type}">${money(balance(a))}</div>`, "account-item compact")).join("") || emptyHtml();
   const up = upcoming(), cash = L().accounts.filter((a) => a.type === "asset").reduce((n, a) => n + balance(a), 0) + up.reduce((n, r) => n + (r.type === "income" ? r.amount : r.type === "expense" ? -r.amount : 0), 0);
-  const upcomingHtml = up.map((r) => item(r.name, `${fmt(r.nextDate)} / ${r.cadence}`, `<div class="amount ${r.type}">${r.type === "income" ? "+" : r.type === "expense" ? "-" : ""}${money(r.amount)}</div>`)).join("") || emptyHtml();
+  const upcomingHtml = up.map((r) => recurringLine(r)).join("") || emptyHtml();
   el.reportAccounts.innerHTML = accountHtml;
   el.reportForecast.textContent = `${money(cash)} forecast`;
   el.reportUpcoming.innerHTML = upcomingHtml;
+}
+
+function renderHomeWarnings(p) {
+  const spent = byCategory(p.filter((x) => x.type === "expense"));
+  const warnings = L().budgets
+    .map((b) => ({ budget: b, spent: spent[b.category] || 0, limit: limit(b) }))
+    .filter((x) => x.limit > 0 && x.spent / x.limit >= 0.8)
+    .sort((a, b) => (b.spent / b.limit) - (a.spent / a.limit))
+    .slice(0, 5);
+  el.budgetWarnings.innerHTML = warnings.map((x) => progress(x.budget, x.spent)).join("") || emptyHtml("No budget warnings", "Categories at 80% or more will show here.");
+  el.homeUpcoming.innerHTML = upcoming().slice(0, 5).map((r) => recurringLine(r)).join("") || emptyHtml("Nothing due soon", "Recurring bills and income due in the next 30 days will show here.");
 }
 
 function renderAccounts() {
@@ -395,26 +407,72 @@ function resetBudget() { el.budgetId.value = ""; el.budgetCategory.value = ""; e
 function resetAccount() { el.accountId.value = ""; el.accountName.value = ""; el.accountType.value = "asset"; el.accountValue.value = ""; el.accountOwed.value = ""; el.accountBalance.value = ""; el.accountSubmitLabel.textContent = "Save Account"; }
 function resetUser() { el.userId.value = ""; el.userName.value = ""; el.userEmail.value = ""; el.userRole.value = "user"; el.userPassword.value = ""; el.userPasswordConfirm.value = ""; el.userSubmitLabel.textContent = "Add User"; }
 function resetBook() { el.bookId.value = ""; el.bookName.value = ""; el.bookSubmitLabel.textContent = "Update Book"; }
-function resetRecurring() { el.recurringId.value = ""; el.recurringName.value = ""; el.recurringType.value = "expense"; el.recurringAmount.value = ""; el.recurringCadence.value = "monthly"; el.recurringNextDate.value = today; el.recurringSubmitLabel.textContent = "Save Recurring"; }
+function resetRecurring() { el.recurringId.value = ""; el.recurringName.value = ""; el.recurringType.value = "expense"; el.recurringAccount.value = ""; el.recurringToAccount.value = ""; el.recurringCategory.value = L().budgets[0]?.category || "Other"; el.recurringAmount.value = ""; el.recurringCadence.value = "monthly"; el.recurringNextDate.value = today; el.recurringSubmitLabel.textContent = "Save Recurring"; }
 function resetTxn() { el.transactionId.value = ""; el.txnDate.value = today; el.txnType.value = "expense"; el.txnPayee.value = ""; el.txnAccount.value = ""; el.txnToAccount.value = ""; el.txnCategory.value = L().budgets[0]?.category || "Other"; el.txnAmount.value = ""; el.txnDescription.value = ""; el.txnNotes.value = ""; el.txnPayPeriod.value = "none"; el.txnCleared.checked = false; el.splitRows.innerHTML = ""; el.txnSubmitLabel.textContent = "Save Transaction"; }
 
 function saveQuickTxn(e) { e.preventDefault(); const t = txn({ date: el.quickDate.value, type: el.quickType.value, category: el.quickCategory.value, accountId: el.quickAccount.value, toAccountId: el.quickToAccount.value, amount: el.quickAmount.value, description: el.quickDescription.value.trim() }); if (validTxn(t)) { record(); L().transactions.push(t); save(); resetQuick(); render(); note("Transaction added."); } }
 function openTxn(t = null) { resetTxn(); renderOptions(); if (t) fillTxn(t); el.transactionDialogTitle.textContent = t ? "Edit Transaction" : "Add Transaction"; el.transactionDialog.showModal(); }
 function fillTxn(t) { el.transactionId.value = t.id; el.txnDate.value = t.date; el.txnType.value = t.type; el.txnPayee.value = t.payee; el.txnAccount.value = t.accountId; el.txnToAccount.value = t.toAccountId; el.txnCategory.value = t.category; el.txnAmount.value = t.amount; el.txnDescription.value = t.description; el.txnNotes.value = t.notes; el.txnPayPeriod.value = t.payPeriod; el.txnCleared.checked = t.cleared; t.splits.forEach(addSplit); el.txnSubmitLabel.textContent = "Update Transaction"; }
-function saveTxn(e) { e.preventDefault(); const old = L().transactions.find((x) => x.id === el.transactionId.value), t = txn({ id: el.transactionId.value || id(), date: el.txnDate.value, type: el.txnType.value, payee: el.txnPayee.value.trim(), accountId: el.txnAccount.value, toAccountId: el.txnToAccount.value, category: el.txnCategory.value, amount: el.txnAmount.value, description: el.txnDescription.value.trim(), notes: el.txnNotes.value.trim(), payPeriod: el.txnPayPeriod.value, cleared: el.txnCleared.checked, reconciled: old?.reconciled, splits: readSplits() }); if (!validTxn(t)) return; record(); upsert(L().transactions, t); save(); render(); el.transactionDialog.close(); }
-function validTxn(t) { if (!t.description || !t.amount) return note("Add a description and amount first."), false; if (t.type === "transfer" && (!t.accountId || !t.toAccountId || t.accountId === t.toAccountId)) return note("Transfers need two different accounts."), false; return true; }
-function editTransaction(id) { const t = L().transactions.find((x) => x.id === id); if (t) openTxn(t); }
-function deleteTransaction(id) { if (confirm("Delete transaction?")) { record(); L().transactions = L().transactions.filter((x) => x.id !== id); save(); render(); } }
+function saveTxn(e) { e.preventDefault(); const old = L().transactions.find((x) => x.id === el.transactionId.value); if (old?.reconciled) return note("Reconciled transactions are locked. Unreconciled history can be edited."); const t = txn({ id: el.transactionId.value || id(), date: el.txnDate.value, type: el.txnType.value, payee: el.txnPayee.value.trim(), accountId: el.txnAccount.value, toAccountId: el.txnToAccount.value, category: el.txnCategory.value, amount: el.txnAmount.value, description: el.txnDescription.value.trim(), notes: el.txnNotes.value.trim(), payPeriod: el.txnPayPeriod.value, cleared: el.txnCleared.checked, reconciled: old?.reconciled, splits: readSplits() }); if (!validTxn(t)) return; record(); upsert(L().transactions, t); save(); render(); el.transactionDialog.close(); }
+function validTxn(t) {
+  if (!t.description || !t.amount) return note("Add a description and amount first."), false;
+  if (!t.accountId) return note("Choose the bank, card, or asset account for this transaction."), false;
+  if (!L().accounts.some((a) => a.id === t.accountId)) return note("The selected account does not exist."), false;
+  if (t.type === "transfer") {
+    if (!t.toAccountId || t.accountId === t.toAccountId) return note("Transfers need two different accounts."), false;
+    if (!L().accounts.some((a) => a.id === t.toAccountId)) return note("The destination account does not exist."), false;
+  }
+  if (t.splits.length) {
+    const splitTotal = sum(t.splits);
+    if (Math.abs(splitTotal - t.amount) > .009) return note(`Split total must equal the transaction amount. Difference: ${money(t.amount - splitTotal)}.`), false;
+  }
+  return true;
+}
+function editTransaction(id) { const t = L().transactions.find((x) => x.id === id); if (!t) return; if (t.reconciled) return note("Reconciled transactions are locked."); openTxn(t); }
+function deleteTransaction(id) { const t = L().transactions.find((x) => x.id === id); if (t?.reconciled) return note("Reconciled transactions are locked."); if (confirm("Delete transaction?")) { record(); L().transactions = L().transactions.filter((x) => x.id !== id); save(); render(); } }
 function addSplit(x = {}) { const row = document.createElement("div"); row.className = "split-row"; row.innerHTML = `<select class="split-category"></select><input class="split-amount" type="number" min="0" step="0.01" placeholder="Amount"><input class="split-memo" maxlength="80" placeholder="Memo"><button class="row-button danger" type="button">Remove</button>`; el.splitRows.append(row); renderOptions(); row.querySelector(".split-category").value = x.category || L().budgets[0]?.category || "Other"; row.querySelector(".split-amount").value = x.amount || ""; row.querySelector(".split-memo").value = x.memo || ""; row.querySelector(".split-amount").oninput = splitStatus; row.querySelector("button").onclick = () => { row.remove(); splitStatus(); }; }
 function readSplits() { return $$(".split-row").map((r) => split({ category: r.querySelector(".split-category").value, amount: r.querySelector(".split-amount").value, memo: r.querySelector(".split-memo").value })).filter((x) => x.amount > 0); }
 function splitStatus() { const total = sum(readSplits()), amount = +el.txnAmount.value || 0; el.splitStatus.textContent = total ? `Split total ${money(total)} / Remaining ${money(amount - total)}` : "No splits"; el.splitStatus.classList.toggle("is-error", total && Math.abs(amount - total) > .009); }
 
 function saveBudget(e) { e.preventDefault(); const b = budget({ id: el.budgetId.value || id(), category: title(el.budgetCategory.value), monthlyLimit: el.budgetLimit.value, period: el.budgetPeriod.value, group: el.budgetGroup.value }); record(); upsert(L().budgets, b); save(); resetBudget(); render(); }
 function editBudget(id) { const b = L().budgets.find((x) => x.id === id); if (!b) return; el.budgetId.value = b.id; el.budgetCategory.value = b.category; el.budgetLimit.value = b.monthlyLimit; el.budgetPeriod.value = b.period; el.budgetGroup.value = b.group; el.budgetSubmitLabel.textContent = "Update Budget"; }
-function deleteBudget(id) { if (confirm("Delete budget?")) { record(); L().budgets = L().budgets.filter((x) => x.id !== id); save(); render(); } }
+function deleteBudget(id) {
+  const b = L().budgets.find((x) => x.id === id);
+  if (!b) return;
+  const txns = L().transactions.filter((x) => x.category === b.category || x.splits.some((s) => s.category === b.category));
+  const rec = L().recurring.filter((x) => x.category === b.category);
+  const refs = txns.length + rec.length;
+  if (refs && !confirm(`"${b.category}" is used by ${refs} transaction or recurring row(s). Delete this budget target AND all those dependent rows? This cannot be undone with import/export backup unless you exported first.`)) return;
+  if (!refs && !confirm("Delete budget?")) return;
+  record();
+  L().budgets = L().budgets.filter((x) => x.id !== id);
+  if (refs) {
+    L().transactions = L().transactions.filter((x) => x.category !== b.category && !x.splits.some((s) => s.category === b.category));
+    L().recurring = L().recurring.filter((x) => x.category !== b.category);
+  }
+  save();
+  render();
+}
 function saveAccount(e) { e.preventDefault(); const a = account({ id: el.accountId.value || id(), name: el.accountName.value.trim(), type: el.accountType.value, value: el.accountValue.value, owed: el.accountOwed.value, openingBalance: el.accountBalance.value }); record(); upsert(L().accounts, a); save(); resetAccount(); render(); }
 function editAccount(id) { const a = L().accounts.find((x) => x.id === id); if (!a) return; el.accountId.value = a.id; el.accountName.value = a.name; el.accountType.value = a.type; el.accountValue.value = a.value || ""; el.accountOwed.value = a.owed || ""; el.accountBalance.value = a.openingBalance; el.accountSubmitLabel.textContent = "Update Account"; }
-function deleteAccount(id) { if (confirm("Delete account?")) { record(); L().accounts = L().accounts.filter((x) => x.id !== id); save(); render(); } }
+function deleteAccount(id) {
+  const a = L().accounts.find((x) => x.id === id);
+  if (!a) return;
+  const txns = L().transactions.filter((x) => x.accountId === id || x.toAccountId === id);
+  const rec = L().recurring.filter((x) => x.accountId === id || x.toAccountId === id);
+  const refs = txns.length + rec.length;
+  if (refs && !confirm(`"${a.name}" is used by ${refs} transaction or recurring row(s). Delete the account AND all those dependent rows? Export a JSON backup first if you may need this history.`)) return;
+  if (!refs && !confirm("Delete account?")) return;
+  record();
+  L().accounts = L().accounts.filter((x) => x.id !== id);
+  if (refs) {
+    L().transactions = L().transactions.filter((x) => x.accountId !== id && x.toAccountId !== id);
+    L().recurring = L().recurring.filter((x) => x.accountId !== id && x.toAccountId !== id);
+  }
+  if (state.activeRegisterAccountId === id) state.activeRegisterAccountId = L().accounts[0]?.id || "";
+  save();
+  render();
+}
 function showRegister(id) { state.activeRegisterAccountId = id; save(); showTab("accounts"); renderAccounts(); }
 function fillOpening() { if (!el.accountValue.value && !el.accountOwed.value) return; el.accountBalance.value = el.accountType.value === "asset" ? (+el.accountValue.value || 0) - (+el.accountOwed.value || 0) : (+el.accountOwed.value || +el.accountValue.value || 0); }
 function accountTxns(a) { return L().transactions.filter((x) => x.accountId === a.id || x.toAccountId === a.id); }
@@ -525,9 +583,9 @@ async function changeOwnPassword(e) {
     note("Password could not be changed.");
   }
 }
-function openRecurring(r = null) { resetRecurring(); renderOptions(); if (r) { ["Id","Name","Type","Account","ToAccount","Category","Amount","Cadence","NextDate"].forEach((k) => { const key = `recurring${k}`; if (el[key]) el[key].value = r[k.charAt(0).toLowerCase() + k.slice(1)] || ""; }); el.recurringSubmitLabel.textContent = "Update Recurring"; el.recurringDialogTitle.textContent = "Edit Recurring Transaction"; } else { el.recurringDialogTitle.textContent = "Add Recurring Transaction"; } el.recurringDialog.showModal(); }
+function openRecurring(r = null) { resetRecurring(); renderOptions(); if (r) { el.recurringId.value = r.id; el.recurringName.value = r.name; el.recurringType.value = r.type; el.recurringAccount.value = r.accountId; el.recurringToAccount.value = r.toAccountId; el.recurringCategory.value = r.category; el.recurringAmount.value = r.amount; el.recurringCadence.value = r.cadence; el.recurringNextDate.value = r.nextDate; el.recurringSubmitLabel.textContent = "Update Recurring"; el.recurringDialogTitle.textContent = "Edit Recurring Transaction"; } else { el.recurringDialogTitle.textContent = "Add Recurring Transaction"; } el.recurringDialog.showModal(); }
 function viewRecurringList() { showTab("transactions"); el.recurringList.scrollIntoView({ behavior: "smooth", block: "start" }); }
-function saveRecurring(e) { e.preventDefault(); const r = recurring({ id: el.recurringId.value || id(), name: el.recurringName.value.trim(), type: el.recurringType.value, accountId: el.recurringAccount.value, toAccountId: el.recurringToAccount.value, category: el.recurringCategory.value, amount: el.recurringAmount.value, cadence: el.recurringCadence.value, nextDate: el.recurringNextDate.value }); if (!r.name || !r.amount) return; if (r.type === "transfer" && (!r.accountId || !r.toAccountId || r.accountId === r.toAccountId)) return note("Recurring transfers need two different accounts."); record(); upsert(L().recurring, r); save(); resetRecurring(); el.recurringDialog.close(); render(); viewRecurringList(); }
+function saveRecurring(e) { e.preventDefault(); const r = recurring({ id: el.recurringId.value || id(), name: el.recurringName.value.trim(), type: el.recurringType.value, accountId: el.recurringAccount.value, toAccountId: el.recurringToAccount.value, category: el.recurringCategory.value, amount: el.recurringAmount.value, cadence: el.recurringCadence.value, nextDate: el.recurringNextDate.value }); if (!r.name || !r.amount) return note("Add a name and amount."); if (!r.accountId) return note("Choose the account for this recurring item."); if (r.type === "transfer" && (!r.toAccountId || r.accountId === r.toAccountId)) return note("Recurring transfers need two different accounts."); record(); upsert(L().recurring, r); save(); resetRecurring(); el.recurringDialog.close(); render(); viewRecurringList(); }
 function editRecurring(id) { const r = L().recurring.find((x) => x.id === id); if (!r) return; showTab("transactions"); openRecurring(r); }
 function deleteRecurring(id) { if (confirm("Delete recurring item?")) { record(); L().recurring = L().recurring.filter((x) => x.id !== id); save(); render(); } }
 function postDueRecurring() { const due = L().recurring.filter((r) => r.active && r.nextDate <= today); if (!due.length) return note("No recurring items are due."); record(); due.forEach((r) => { L().transactions.push(txn({ date: r.nextDate, type: r.type, payee: r.name, accountId: r.accountId, toAccountId: r.toAccountId, category: r.category, description: r.name, amount: r.amount, notes: `Posted from recurring ${r.cadence} item.` })); r.nextDate = nextDate(r.nextDate, r.cadence); }); save(); render(); }
@@ -577,12 +635,22 @@ function seedLedgerDemo(bookLedger) {
   );
 }
 function deleteDemo() {
-  if (!confirm("Delete all budget, ledger, user, book, and account data?")) return;
+  if (!confirm("Delete demo data only? Personal users, books, accounts, budgets, transactions, and recurring items will be kept.")) return;
   record();
-  state = normalize(base());
+  state.users = state.users.filter((x) => !x.demo);
+  state.books = state.books.filter((x) => !x.demo);
+  Object.keys(state.ledgers).forEach((bookId) => {
+    if (!state.books.some((b) => b.id === bookId)) {
+      delete state.ledgers[bookId];
+      return;
+    }
+    const l = state.ledgers[bookId] = ledger(state.ledgers[bookId] || {});
+    ["transactions","accounts","budgets","recurring"].forEach((key) => l[key] = l[key].filter((x) => !x.demo));
+  });
+  ensureAccess();
   save();
   render();
-  note("All data reset.");
+  note("Demo data removed.");
 }
 
 function balance(a) { return (+a.openingBalance || 0) + L().transactions.reduce((n, t) => n + delta(t, a.id), 0); }
@@ -651,15 +719,80 @@ function record() { undo.push(JSON.stringify(state)); if (undo.length > 5) undo.
 function restore(s) { state = normalize(JSON.parse(s)); syncMonth(state.currentMonth); document.body.dataset.theme = state.theme; save(); render(); }
 function undoLast() { if (undo.length) { redo.push(JSON.stringify(state)); restore(undo.pop()); } }
 function redoLast() { if (redo.length) { undo.push(JSON.stringify(state)); restore(redo.pop()); } }
-function exportState() { return isAdmin() ? state : { version: state.version, user: currentUser(), book: currentBook(), ledger: L() }; }
+function exportState() {
+  if (isAdmin()) return state;
+  const user = currentUser(), book = currentBook();
+  return {
+    version: state.version,
+    theme: state.theme,
+    currentMonth: state.currentMonth,
+    periodMode: state.periodMode,
+    activeUserId: user.id,
+    activeBookId: book.id,
+    activeRegisterAccountId: state.activeRegisterAccountId,
+    registerStartDate: state.registerStartDate,
+    registerEndDate: state.registerEndDate,
+    transactionStartDate: state.transactionStartDate,
+    transactionEndDate: state.transactionEndDate,
+    users: [user],
+    books: [book],
+    ledgers: { [book.id]: L() },
+  };
+}
 function exportJson() { download(new Blob([JSON.stringify(exportState(), null, 2)], { type: "application/json" }), `budget-ledger-backup-${stamp()}.json`); }
 function exportCsv() { const rows = [["book","date","type","payee","description","account","toAccount","category","amount","cleared","reconciled","notes"], ...L().transactions.map((t) => [currentBook().name,t.date,t.type,t.payee,t.description,L().accounts.find((a) => a.id === t.accountId)?.name || "",L().accounts.find((a) => a.id === t.toAccountId)?.name || "",t.category,t.amount,t.cleared,t.reconciled,t.notes])]; download(new Blob([rows.map((r) => r.map(csv).join(",")).join("\n")], { type: "text/csv" }), `budget-ledger-${stamp()}.csv`); }
-async function importJson(e) { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; try { const imported = JSON.parse(await f.text()); if (confirm(isAdmin() ? "Replace current ledger data?" : "Replace your current book data?")) { record(); if (isAdmin()) state = normalize(imported); else state.ledgers[state.activeBookId] = ledger(imported.ledger || imported); ensureLoginIdentity(); save(); render(); } } catch { note("Could not import JSON."); } }
-async function importCsv(e) { const f = e.target.files?.[0]; e.target.value = ""; if (!f) return; const rows = parseCsv(await f.text()); if (rows.length < 2) return; const head = rows[0].map((x) => x.toLowerCase()), get = (r, k) => r[head.indexOf(k)] || ""; record(); rows.slice(1).forEach((r) => L().transactions.push(txn({ date: get(r,"date"), type: get(r,"type"), payee: get(r,"payee"), description: get(r,"description"), category: get(r,"category"), amount: get(r,"amount"), cleared: /true|yes|1/i.test(get(r,"cleared")) }))); save(); render(); }
+async function importJson(e) {
+  const f = e.target.files?.[0];
+  e.target.value = "";
+  if (!f) return;
+  try {
+    const imported = JSON.parse(await f.text());
+    if (!confirm(isAdmin() ? "Replace current ledger data with this JSON backup?" : "Replace your current book data with this JSON backup?")) return;
+    record();
+    if (isAdmin()) state = normalize(stateFromImport(imported));
+    else state.ledgers[state.activeBookId] = ledger(firstImportLedger(imported));
+    ensureLoginIdentity();
+    save();
+    render();
+    note("JSON import complete.");
+  } catch { note("Could not import JSON."); }
+}
+async function importCsv(e) {
+  const f = e.target.files?.[0];
+  e.target.value = "";
+  if (!f) return;
+  const rows = parseCsv(await f.text());
+  if (rows.length < 2) return;
+  const head = rows[0].map((x) => x.toLowerCase()), get = (r, k) => r[head.indexOf(k)] || "";
+  if (!confirm("Import these CSV transactions into the current book? Export JSON first if you may need to undo.")) return;
+  record();
+  rows.slice(1).forEach((r) => {
+    const accountId = accountIdFromName(get(r, "account"));
+    const toAccountId = accountIdFromName(get(r, "toaccount"));
+    const row = txn({
+      date: get(r,"date"),
+      type: get(r,"type"),
+      payee: get(r,"payee"),
+      description: get(r,"description"),
+      accountId,
+      toAccountId,
+      category: get(r,"category"),
+      amount: get(r,"amount"),
+      cleared: bool(get(r,"cleared")),
+      reconciled: bool(get(r,"reconciled")),
+      notes: get(r,"notes"),
+    });
+    if (row.accountId && row.amount) L().transactions.push(row);
+  });
+  save();
+  render();
+  note("CSV import complete.");
+}
 async function postDownload(url, name) { try { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(exportState()) }); if (!r.ok) throw 0; download(await r.blob(), name); } catch { note("Export failed."); } }
 
 function progress(b, spent) { const l = limit(b), pct = l ? Math.min(spent / l * 100, 100) : 0; return `<article class="progress-item"><div class="item-row"><div><div class="item-title">${esc(b.category)}</div><div class="item-meta">Budgeted ${money(l)} / Spent ${money(spent)}</div></div><div class="amount ${l - spent < 0 ? "expense" : "income"}">${money(l - spent)}</div></div><div class="progress-track"><div class="progress-fill ${pct >= 100 ? "over" : pct >= 80 ? "warning" : ""}" style="width:${pct}%"></div></div></article>`; }
 function bar(label, amount, max) { return `<article class="progress-item"><div class="item-row"><div class="item-title">${esc(label)}</div><div class="amount expense">${money(amount)}</div></div><div class="progress-track"><div class="progress-fill warning" style="width:${Math.max(amount / max * 100, 8)}%"></div></div></article>`; }
+function recurringLine(r) { return item(r.name, `${fmt(r.nextDate)} / ${r.cadence}`, `<div class="amount ${r.type}">${r.type === "income" ? "+" : r.type === "expense" ? "-" : ""}${money(r.amount)}</div>`); }
 function item(title, meta, action = "", cls = "account-item") { return `<article class="${cls}"><div class="item-row"><div><div class="item-title">${esc(title)}</div><div class="item-meta">${esc(meta)}</div></div><div class="actions">${action}</div></div></article>`; }
 function emptyHtml(a = "No entries yet", b = "Your saved items will appear here.") { return `<div class="empty-state"><strong>${a}</strong><span>${b}</span></div>`; }
 function upsert(list, row) { const i = list.findIndex((x) => x.id === row.id); i >= 0 ? list[i] = row : list.push(row); }
@@ -673,6 +806,26 @@ function title(v) { return String(v || "").toLowerCase().split(/\s+/).filter(Boo
 function stamp() { return new Date().toISOString().slice(0, 10); }
 function id() { return crypto.randomUUID(); }
 function json(t) { try { return t ? JSON.parse(t) : null; } catch { return null; } }
+function bool(v) { return /true|yes|1|reconciled|cleared/i.test(String(v || "")); }
+function themes() { return ["classic","slate","forest","berry","ocean","copper","orchid","graphite","mint","ruby","sky","contrast"]; }
+function firstImportLedger(imported) { if (imported?.ledger) return imported.ledger; if (imported?.ledgers) return imported.ledgers[imported.activeBookId] || imported.ledgers[Object.keys(imported.ledgers)[0]] || imported; return imported; }
+function stateFromImport(imported) {
+  if (imported?.users && imported?.books && imported?.ledgers) return imported;
+  if (imported?.user && imported?.book && imported?.ledger) return { version: imported.version || 4, theme: imported.theme || "classic", currentMonth: imported.currentMonth || thisMonth, periodMode: imported.periodMode || "month", activeUserId: imported.user.id, activeBookId: imported.book.id, users: [imported.user], books: [imported.book], ledgers: { [imported.book.id]: imported.ledger } };
+  const b = base();
+  b.ledgers[b.activeBookId] = ledger(imported);
+  return b;
+}
+function accountIdFromName(name) {
+  const label = String(name || "").trim();
+  if (!label) return "";
+  let a = L().accounts.find((x) => x.name.toLowerCase() === label.toLowerCase());
+  if (!a) {
+    a = account({ name: label });
+    L().accounts.push(a);
+  }
+  return a.id;
+}
 function csv(v) { return `"${String(v ?? "").replaceAll('"','""')}"`; }
 function parseCsv(text) { const rows = []; let row = [], cell = "", q = false; for (let i = 0; i < text.length; i++) { const c = text[i], n = text[i + 1]; if (q && c === '"' && n === '"') { cell += '"'; i++; } else if (c === '"') q = !q; else if (!q && c === ",") { row.push(cell); cell = ""; } else if (!q && (c === "\n" || c === "\r")) { if (c === "\r" && n === "\n") i++; row.push(cell); if (row.some(Boolean)) rows.push(row); row = []; cell = ""; } else cell += c; } row.push(cell); if (row.some(Boolean)) rows.push(row); return rows; }
 function download(blob, name) { const a = document.createElement("a"), url = URL.createObjectURL(blob); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); URL.revokeObjectURL(url); }

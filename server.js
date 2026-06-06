@@ -142,6 +142,15 @@ function publicAuthUsers() {
   return auth.users.map((user) => ({ username: user.username, role: user.role }));
 }
 
+function newId() {
+  return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex");
+}
+
+function titleName(value) {
+  const clean = String(value || "User").replace(/@.*/, "").replace(/[._-]+/g, " ").trim();
+  return clean.replace(/\b\w/g, (letter) => letter.toUpperCase()) || "User";
+}
+
 function isSecureRequest(req) {
   return (
     req.socket.encrypted ||
@@ -408,6 +417,38 @@ async function handleDeleteAuthUser(req, res) {
   }
 }
 
+async function handleChangeOwnPassword(req, res, session) {
+  try {
+    if (!auth) {
+      sendJson(req, res, 200, { ok: true });
+      return;
+    }
+
+    const raw = await readBody(req);
+    const payload = JSON.parse(raw || "{}");
+    const currentPassword = String(payload.currentPassword || "");
+    const newPassword = String(payload.newPassword || "");
+    const index = auth.users.findIndex((user) => user.username === session.username);
+    const existing = index === -1 ? null : auth.users[index];
+
+    if (!existing || verifyLogin(session.username, currentPassword) !== existing) {
+      sendJson(req, res, 401, { ok: false, message: "Current password is incorrect." });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      sendJson(req, res, 400, { ok: false, message: "Use at least 8 characters for passwords." });
+      return;
+    }
+
+    auth.users[index] = createCredential(existing.username, newPassword, existing.iterations || 210000, existing.role);
+    writeAuthConfig();
+    sendJson(req, res, 200, { ok: true });
+  } catch {
+    sendJson(req, res, 400, { ok: false, message: "Unable to change password." });
+  }
+}
+
 function serveFile(req, res, filePath) {
   fs.readFile(filePath, (error, data) => {
     if (error) {
@@ -488,25 +529,154 @@ async function handleBackupZip(req, res) {
   }
 }
 
-async function handleGetState(req, res) {
+function emptySavedState() {
+  return { version: 4, theme: "classic", users: [], books: [], ledgers: {} };
+}
+
+function readSavedState() {
+  if (!fs.existsSync(dataPath)) return null;
+  const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+  return {
+    ...emptySavedState(),
+    ...state,
+    users: Array.isArray(state.users) ? state.users : [],
+    books: Array.isArray(state.books) ? state.books : [],
+    ledgers: state.ledgers && typeof state.ledgers === "object" ? state.ledgers : {},
+  };
+}
+
+function writeSavedState(state) {
+  fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+  fs.writeFileSync(dataPath, JSON.stringify(state, null, 2));
+}
+
+function blankLedger() {
+  return { transactions: [], budgets: [], accounts: [], recurring: [] };
+}
+
+function ensureSessionUserBook(state, session, incoming = {}) {
+  const username = session.username || "local";
+  const role = session.role === "admin" ? "admin" : "user";
+  const incomingUser = Array.isArray(incoming.users) ? incoming.users[0] : incoming.user;
+  let user = state.users.find((entry) => entry.email === username);
+
+  if (!user) {
+    user = {
+      id: newId(),
+      name: incomingUser?.name || titleName(username),
+      email: username,
+      role,
+    };
+    state.users.push(user);
+  }
+
+  user.email = username;
+  user.role = role;
+  if (!user.name) user.name = incomingUser?.name || titleName(username);
+
+  let book = state.books.find((entry) => entry.ownerUserId === user.id);
+  if (!book) {
+    const incomingBook = Array.isArray(incoming.books) ? incoming.books[0] : incoming.book;
+    book = {
+      id: newId(),
+      name: incomingBook?.name || `${user.name}'s Budget`,
+      ownerUserId: user.id,
+    };
+    state.books.push(book);
+  }
+
+  state.ledgers[book.id] ||= blankLedger();
+  return { user, book };
+}
+
+function scopedStateForSession(state, session) {
+  const { user, book } = ensureSessionUserBook(state, session);
+  return {
+    version: state.version || 4,
+    theme: user.theme || state.theme || "classic",
+    currentMonth: user.currentMonth || state.currentMonth,
+    periodMode: user.periodMode || state.periodMode,
+    activeUserId: user.id,
+    activeBookId: book.id,
+    activeRegisterAccountId: user.activeRegisterAccountId || "",
+    registerStartDate: user.registerStartDate,
+    registerEndDate: user.registerEndDate,
+    transactionStartDate: user.transactionStartDate,
+    transactionEndDate: user.transactionEndDate,
+    users: [{ ...user }],
+    books: [{ ...book }],
+    ledgers: { [book.id]: state.ledgers[book.id] || blankLedger() },
+  };
+}
+
+function firstIncomingLedger(incoming) {
+  if (incoming.ledger && typeof incoming.ledger === "object") return incoming.ledger;
+  if (incoming.ledgers && typeof incoming.ledgers === "object") {
+    const active = incoming.activeBookId && incoming.ledgers[incoming.activeBookId];
+    if (active) return active;
+    const firstKey = Object.keys(incoming.ledgers)[0];
+    if (firstKey) return incoming.ledgers[firstKey];
+  }
+  return blankLedger();
+}
+
+function mergeScopedState(fullState, incoming, session) {
+  const { user, book } = ensureSessionUserBook(fullState, session, incoming);
+  const incomingLedger = firstIncomingLedger(incoming);
+
+  user.theme = incoming.theme || user.theme || fullState.theme || "classic";
+  user.currentMonth = incoming.currentMonth || user.currentMonth;
+  user.periodMode = incoming.periodMode || user.periodMode;
+  user.activeRegisterAccountId = incoming.activeRegisterAccountId || "";
+  user.registerStartDate = incoming.registerStartDate || user.registerStartDate;
+  user.registerEndDate = incoming.registerEndDate || user.registerEndDate;
+  user.transactionStartDate = incoming.transactionStartDate || user.transactionStartDate;
+  user.transactionEndDate = incoming.transactionEndDate || user.transactionEndDate;
+  fullState.ledgers[book.id] = incomingLedger;
+  return fullState;
+}
+
+async function handleGetState(req, res, session) {
   try {
-    if (!fs.existsSync(dataPath)) {
+    const state = readSavedState();
+    if (!state) {
+      if (auth && session.role !== "admin") {
+        const created = emptySavedState();
+        const scoped = scopedStateForSession(created, session);
+        writeSavedState(created);
+        sendJson(req, res, 200, { ok: true, state: scoped });
+        return;
+      }
       sendJson(req, res, 200, { ok: true, state: null });
       return;
     }
-    const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+
+    if (auth && session.role !== "admin") {
+      const scoped = scopedStateForSession(state, session);
+      writeSavedState(state);
+      sendJson(req, res, 200, { ok: true, state: scoped });
+      return;
+    }
+
     sendJson(req, res, 200, { ok: true, state });
   } catch {
     sendJson(req, res, 500, { ok: false, message: "Saved state could not be read." });
   }
 }
 
-async function handlePutState(req, res) {
+async function handlePutState(req, res, session) {
   try {
     const raw = await readBody(req, maxStateBody);
     const state = JSON.parse(raw || "{}");
-    fs.mkdirSync(path.dirname(dataPath), { recursive: true });
-    fs.writeFileSync(dataPath, JSON.stringify(state, null, 2));
+
+    if (auth && session.role !== "admin") {
+      const fullState = readSavedState() || emptySavedState();
+      writeSavedState(mergeScopedState(fullState, state, session));
+      sendJson(req, res, 200, { ok: true });
+      return;
+    }
+
+    writeSavedState(state);
     sendJson(req, res, 200, { ok: true });
   } catch {
     sendJson(req, res, 400, { ok: false, message: "Saved state could not be written." });
@@ -668,13 +838,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === "/api/auth/password" && req.method === "POST") {
+    await handleChangeOwnPassword(req, res, session);
+    return;
+  }
+
   if (pathname === "/api/state" && req.method === "GET") {
-    await handleGetState(req, res);
+    await handleGetState(req, res, session);
     return;
   }
 
   if (pathname === "/api/state" && req.method === "PUT") {
-    await handlePutState(req, res);
+    await handlePutState(req, res, session);
     return;
   }
 

@@ -16,6 +16,7 @@ const el = {};
 [
   "activeUserLabel","activeBookLabel","monthFilter","monthSelect","yearInput","prevMonthBtn","nextMonthBtn","todayMonthBtn",
   "periodLabelBtn","periodPickerLabel","monthPickerPanel","pickerPrevYearBtn","pickerNextYearBtn","pickerYearLabel","pickerMonthGrid",
+  "logoutBtn",
   "addTransactionBtn","transactionAddBtn","recurringAddBtn","viewRecurringBtn","undoBtn","redoBtn","incomeTotal","expenseTotal","remainderTotal","aumTotal",
   "quickTransactionForm","quickClearBtn","quickDate","quickType","quickCategory","quickAccount","quickToAccount","quickAmount","quickDescription",
   "budgetProgress","dailyAverage","dailyBars","transactionStartDate","transactionEndDate","transactionThisMonthBtn","searchTransactions","filterType","transactionRows","budgetForm","budgetId","budgetCategory",
@@ -26,6 +27,7 @@ const el = {};
   "registerStartDate","registerEndDate","registerThisMonthBtn","statementDate","statementBalance","reconcileStatus","reconcileClearedBalance",
   "reconcileOutstanding","reconcileHelp","userForm","userId","userName","userEmail","userRole","userPassword","userPasswordConfirm","userSubmitLabel","resetUserForm","userCount",
   "userList","bookForm","bookId","bookName","bookSubmitLabel","resetBookForm","bookCount","bookList",
+  "passwordForm","currentPassword","newPassword","newPasswordConfirm","passwordSubmitLabel",
   "themeSelect","exportCsvBtn","exportJsonBtn","importJsonBtn","importJsonFile","importCsvBtn","importCsvFile","exportWorkbookBtn",
   "backupZipBtn","addDemoBtn","deleteDemoBtn","recurringForm","recurringId","recurringName","recurringType","recurringAccount","recurringToAccount",
   "recurringCategory","recurringAmount","recurringCadence","recurringNextDate","recurringSubmitLabel","resetRecurringForm","postDueRecurringBtn","recurringDialog","recurringDialogTitle","closeRecurringDialog",
@@ -42,15 +44,12 @@ async function init() {
   bind();
   resetAll();
   await loadSession();
-  ensureLoginIdentity();
-  syncMonth(state.currentMonth);
-  setPeriod(state.periodMode, false);
-  ensureAccess();
+  await hydrate();
   render();
-  hydrate();
 }
 
 function bind() {
+  el.logoutBtn.onclick = logout;
   $$(".period-button").forEach((b) => b.onclick = () => setPeriod(b.dataset.period));
   el.monthSelect.onchange = monthFromControls;
   el.yearInput.onchange = monthFromControls;
@@ -95,6 +94,7 @@ function bind() {
   el.resetUserForm.onclick = resetUser;
   el.bookForm.onsubmit = saveBook;
   el.resetBookForm.onclick = resetBook;
+  el.passwordForm.onsubmit = changeOwnPassword;
   el.themeSelect.onchange = () => { record(); state.theme = el.themeSelect.value; document.body.dataset.theme = state.theme; save(); };
   el.exportCsvBtn.onclick = exportCsv;
   el.exportJsonBtn.onclick = exportJson;
@@ -240,13 +240,16 @@ async function hydrate() {
       state = normalize(body.state);
       ensureLoginIdentity();
       localStorage.setItem(KEY, JSON.stringify(state));
-      document.body.dataset.theme = state.theme;
-      syncMonth(state.currentMonth);
-      setPeriod(state.periodMode, false);
-      render();
-      note("Server data loaded.");
-    } else syncServer();
+    } else {
+      state = normalize(load());
+      ensureLoginIdentity();
+      syncServer();
+    }
   } catch { syncReady = false; }
+  document.body.dataset.theme = state.theme;
+  syncMonth(state.currentMonth);
+  setPeriod(state.periodMode, false);
+  ensureAccess();
 }
 async function syncServer() {
   try {
@@ -498,6 +501,30 @@ async function deleteUser(id) { if (state.users.length < 2) return note("Keep at
 function saveBook(e) { e.preventDefault(); const existing = state.books.find((x) => x.id === el.bookId.value); if (!existing) return note("Choose a book to edit first."); const name = el.bookName.value.trim(); if (!name) return; record(); existing.name = name; save(); resetBook(); render(); }
 function editBook(id) { const b = state.books.find((x) => x.id === id); if (!b) return; el.bookId.value = b.id; el.bookName.value = b.name; el.bookSubmitLabel.textContent = "Update Book"; showTab("settings"); }
 function deleteBook(id) { if (state.books.length < 2) return note("Keep at least one book."); if (confirm("Delete book?")) { record(); state.books = state.books.filter((b) => b.id !== id); delete state.ledgers[id]; ensureAccess(); save(); render(); } }
+async function changeOwnPassword(e) {
+  e.preventDefault();
+  const currentPassword = el.currentPassword.value;
+  const newPassword = el.newPassword.value;
+  const confirm = el.newPasswordConfirm.value;
+  if (!currentPassword || !newPassword) return note("Enter your current and new password.");
+  if (newPassword.length < 8) return note("Use at least 8 characters for passwords.");
+  if (newPassword !== confirm) return note("New passwords do not match.");
+  try {
+    const res = await fetch("/api/auth/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return note(body.message || "Password could not be changed.");
+    el.currentPassword.value = "";
+    el.newPassword.value = "";
+    el.newPasswordConfirm.value = "";
+    note("Password changed.");
+  } catch {
+    note("Password could not be changed.");
+  }
+}
 function openRecurring(r = null) { resetRecurring(); renderOptions(); if (r) { ["Id","Name","Type","Account","ToAccount","Category","Amount","Cadence","NextDate"].forEach((k) => { const key = `recurring${k}`; if (el[key]) el[key].value = r[k.charAt(0).toLowerCase() + k.slice(1)] || ""; }); el.recurringSubmitLabel.textContent = "Update Recurring"; el.recurringDialogTitle.textContent = "Edit Recurring Transaction"; } else { el.recurringDialogTitle.textContent = "Add Recurring Transaction"; } el.recurringDialog.showModal(); }
 function viewRecurringList() { showTab("transactions"); el.recurringList.scrollIntoView({ behavior: "smooth", block: "start" }); }
 function saveRecurring(e) { e.preventDefault(); const r = recurring({ id: el.recurringId.value || id(), name: el.recurringName.value.trim(), type: el.recurringType.value, accountId: el.recurringAccount.value, toAccountId: el.recurringToAccount.value, category: el.recurringCategory.value, amount: el.recurringAmount.value, cadence: el.recurringCadence.value, nextDate: el.recurringNextDate.value }); if (!r.name || !r.amount) return; if (r.type === "transfer" && (!r.accountId || !r.toAccountId || r.accountId === r.toAccountId)) return note("Recurring transfers need two different accounts."); record(); upsert(L().recurring, r); save(); resetRecurring(); el.recurringDialog.close(); render(); viewRecurringList(); }
@@ -619,6 +646,7 @@ function renderMonthPicker() {
 }
 function setPeriod(p, draw = true) { state.periodMode = ["week","month","year"].includes(p) ? p : "month"; $$(".period-button").forEach((b) => b.classList.toggle("is-active", b.dataset.period === state.periodMode)); save(); if (draw) render(); }
 function showTab(name) { $$(".tab").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === name)); $$(".view").forEach((v) => v.classList.toggle("is-active", v.id === name)); }
+async function logout() { try { await fetch("/api/logout", { method: "POST" }); } catch {} localStorage.removeItem(KEY); localStorage.removeItem("budget-ledger-state-v3"); localStorage.removeItem("budget-ledger-state-v1"); window.location.assign("/login"); }
 function record() { undo.push(JSON.stringify(state)); if (undo.length > 5) undo.shift(); redo = []; }
 function restore(s) { state = normalize(JSON.parse(s)); syncMonth(state.currentMonth); document.body.dataset.theme = state.theme; save(); render(); }
 function undoLast() { if (undo.length) { redo.push(JSON.stringify(state)); restore(undo.pop()); } }

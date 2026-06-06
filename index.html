@@ -22,6 +22,7 @@
             <span>Book</span>
             <strong id="activeBookLabel">Budget Book</strong>
           </div>
+          <button id="logoutBtn" class="ghost-button" type="button">Log Out</button>
           <div class="period-toggle" aria-label="Report period">
             <button class="period-button" data-period="week" type="button">Week</button>
             <button class="period-button is-active" data-period="month" type="button">Month</button>
@@ -531,6 +532,31 @@
                   <option value="contrast">High Contrast</option>
                 </select>
               </label>
+            </section>
+
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Security</h2>
+              </div>
+              <form id="passwordForm" class="form-grid">
+                <label>
+                  <span>Current Password</span>
+                  <input id="currentPassword" type="password" minlength="8" maxlength="120" autocomplete="current-password" required />
+                </label>
+                <label>
+                  <span>New Password</span>
+                  <input id="newPassword" type="password" minlength="8" maxlength="120" autocomplete="new-password" required />
+                </label>
+                <label>
+                  <span>Confirm New Password</span>
+                  <input id="newPasswordConfirm" type="password" minlength="8" maxlength="120" autocomplete="new-password" required />
+                </label>
+                <div class="form-actions wide">
+                  <button class="primary-button" type="submit">
+                    <span id="passwordSubmitLabel">Change Password</span>
+                  </button>
+                </div>
+              </form>
             </section>
 
             <section class="tool-panel">

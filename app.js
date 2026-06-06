@@ -60,7 +60,9 @@
     if(b64[35535]==="[") b64=b64.slice(0,35535)+"b"+b64.slice(35536);
     const binary=atob(b64);
     const bytes=Uint8Array.from(binary,ch=>ch.charCodeAt(0));
-    const code=new TextDecoder().decode(bytes);
-    (0,eval)(code+"\n//# sourceURL=budget-ledger.bundle.js");
+    let code=new TextDecoder().decode(bytes);
+    let movedInit=false;
+    code=code.replace("m();const ze=",()=>{movedInit=true;return "const ze="});
+    (0,eval)(code+(movedInit?"\n;m();":"")+"\n//# sourceURL=budget-ledger.bundle.js");
   }catch(err){fail(err)}
 })();

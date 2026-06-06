@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Budget Ledger</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Simple household budget</p>
+          <h1>Budget Ledger</h1>
+        </div>
+        <div class="topbar-actions">
+          <select id="activeUserSelect" title="Current user"></select>
+          <select id="activeBookSelect" title="Current book"></select>
+          <div class="period-toggle" aria-label="Report period">
+            <button class="period-button" data-period="week" type="button">Week</button>
+            <button class="period-button is-active" data-period="month" type="button">Month</button>
+            <button class="period-button" data-period="year" type="button">Year</button>
+          </div>
+          <label class="month-picker">
+            <span>Month/Year</span>
+            <input id="monthFilter" type="month" />
+          </label>
+          <button id="addTransactionBtn" class="primary-button" type="button">+ Add Transaction</button>
+          <button id="undoBtn" class="icon-button" type="button">Undo</button>
+          <button id="redoBtn" class="icon-button" type="button">Redo</button>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Budget sections">
+        <button class="tab is-active" data-tab="dashboard" type="button">Home</button>
+        <button class="tab" data-tab="transactions" type="button">Transactions</button>
+        <button class="tab" data-tab="budgets" type="button">Budgets</button>
+        <button class="tab" data-tab="reports" type="button">Reports</button>
+        <button class="tab" data-tab="accounts" type="button">Net Worth (AUM)</button>
+        <button class="tab" data-tab="settings" type="button">Settings</button>
+      </nav>
+
+      <main>
+        <section class="summary-grid" aria-label="Budget summary">
+          <article class="metric income">
+            <span>Money In</span>
+            <strong id="incomeTotal">$0</strong>
+          </article>
+          <article class="metric expense">
+            <span>Money Out</span>
+            <strong id="expenseTotal">$0</strong>
+          </article>
+          <article class="metric remainder">
+            <span>Remaining</span>
+            <strong id="remainderTotal">$0</strong>
+          </article>
+          <article class="metric aum">
+            <span>Net Worth (AUM)</span>
+            <strong id="aumTotal">$0</strong>
+          </article>
+        </section>
+
+        <section id="dashboard" class="view is-active">
+          <div class="dashboard-layout">
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Quick Entry</h2>
+                <button id="quickClearBtn" class="ghost-button" type="button">Clear</button>
+              </div>
+              <form id="quickTransactionForm" class="form-grid">
+                <label>
+                  <span>Date</span>
+                  <input id="quickDate" type="date" required />
+                </label>
+                <label>
+                  <span>Type</span>
+                  <select id="quickType">
+                    <option value="expense">Expense</option>
+                    <option value="income">Income</option>
+                    <option value="transfer">Transfer</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Category</span>
+                  <select id="quickCategory"></select>
+                </label>
+                <label>
+                  <span>Amount</span>
+                  <input id="quickAmount" type="number" min="0" step="0.01" placeholder="0.00" required />
+                </label>
+                <label class="wide">
+                  <span>Description</span>
+                  <input id="quickDescription" type="text" maxlength="80" placeholder="What changed?" required />
+                </label>
+                <button class="primary-button wide" type="submit">Add Simple Transaction</button>
+              </form>
+            </section>
+
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Budget Progress</h2>
+                <button id="exportCsvBtn" class="ghost-button" type="button">CSV</button>
+              </div>
+              <div id="budgetProgress" class="budget-progress"></div>
+            </section>
+          </div>
+
+          <section class="tool-panel chart-panel">
+            <div class="section-heading">
+              <h2>Spending Pace</h2>
+              <span id="dailyAverage" class="quiet-pill">$0/day</span>
+            </div>
+            <div id="dailyBars" class="bar-chart" aria-label="Spending chart"></div>
+          </section>
+        </section>
+
+        <section id="transactions" class="view">
+          <section class="tool-panel">
+            <div class="section-heading">
+              <h2>Transactions</h2>
+              <div class="compact-controls">
+                <button id="transactionAddBtn" class="primary-button" type="button">+ Add Transaction</button>
+                <input id="searchTransactions" type="search" placeholder="Search" />
+                <select id="filterType">
+                  <option value="all">All</option>
+                  <option value="expense">Expenses</option>
+                  <option value="income">Income</option>
+                  <option value="transfer">Transfers</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Payee / Description</th>
+                    <th>Category</th>
+                    <th>Account</th>
+                    <th>Status</th>
+                    <th class="numeric">Amount</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="transactionRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="budgets" class="view">
+          <div class="dashboard-layout">
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Budget Targets</h2>
+                <button id="resetBudgetForm" class="ghost-button" type="button">Clear</button>
+              </div>
+              <form id="budgetForm" class="form-grid">
+                <input id="budgetId" type="hidden" />
+                <label class="wide">
+                  <span>Category</span>
+                  <input id="budgetCategory" type="text" maxlength="40" required />
+                </label>
+                <label>
+                  <span>Budget Amount</span>
+                  <input id="budgetLimit" type="number" min="0" step="0.01" required />
+                </label>
+                <label>
+                  <span>Period</span>
+                  <select id="budgetPeriod">
+                    <option value="week">Weekly</option>
+                    <option value="month">Monthly</option>
+                    <option value="year">Yearly</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Group</span>
+                  <select id="budgetGroup">
+                    <option value="expense">Expense</option>
+                    <option value="income">Income</option>
+                  </select>
+                </label>
+                <button class="primary-button wide" type="submit">
+                  <span id="budgetSubmitLabel">Save Budget</span>
+                </button>
+              </form>
+            </section>
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Targets</h2>
+                <span id="budgetCount" class="quiet-pill">0 categories</span>
+              </div>
+              <div id="budgetList" class="budget-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="reports" class="view">
+          <section class="tool-panel">
+            <div class="section-heading">
+              <h2>Simple Reports</h2>
+              <span id="reportPeriodLabel" class="quiet-pill">This month</span>
+            </div>
+            <div class="report-grid">
+              <article class="report-card">
+                <span>Money In</span>
+                <strong id="reportIncome">$0</strong>
+              </article>
+              <article class="report-card">
+                <span>Money Out</span>
+                <strong id="reportExpense">$0</strong>
+              </article>
+              <article class="report-card">
+                <span>Remaining</span>
+                <strong id="reportRemaining">$0</strong>
+              </article>
+              <article class="report-card">
+                <span>Net Worth</span>
+                <strong id="reportNetWorth">$0</strong>
+              </article>
+            </div>
+          </section>
+          <div class="analysis-grid">
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Top Spending</h2>
+              </div>
+              <div id="reportCategories" class="budget-progress"></div>
+            </section>
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Budget Report</h2>
+              </div>
+              <div id="reportBudgets" class="budget-progress"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="accounts" class="view">
+          <section class="net-worth-band">
+            <article class="metric income">
+              <span>Assets</span>
+              <strong id="assetTotal">$0</strong>
+            </article>
+            <article class="metric expense">
+              <span>Liabilities</span>
+              <strong id="debtTotal">$0</strong>
+            </article>
+            <article class="metric aum">
+              <span>Net Worth (AUM)</span>
+              <strong id="netWorthTotal">$0</strong>
+            </article>
+          </section>
+          <div class="dashboard-layout">
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Add Asset or Liability</h2>
+                <button id="resetAccountForm" class="ghost-button" type="button">Clear</button>
+              </div>
+              <form id="accountForm" class="form-grid">
+                <input id="accountId" type="hidden" />
+                <label class="wide">
+                  <span>Name</span>
+                  <input id="accountName" type="text" maxlength="50" required />
+                </label>
+                <label>
+                  <span>Type</span>
+                  <select id="accountType">
+                    <option value="asset">Asset</option>
+                    <option value="liability">Liability</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Value</span>
+                  <input id="accountValue" type="number" step="0.01" placeholder="Optional" />
+                </label>
+                <label>
+                  <span>Owed</span>
+                  <input id="accountOwed" type="number" step="0.01" placeholder="Optional" />
+                </label>
+                <label class="wide">
+                  <span>Balance</span>
+                  <input id="accountBalance" type="number" step="0.01" required />
+                </label>
+                <button class="primary-button wide" type="submit">
+                  <span id="accountSubmitLabel">Save Account</span>
+                </button>
+              </form>
+            </section>
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Assets & Liabilities</h2>
+                <span id="accountSummary" class="quiet-pill">$0 net</span>
+              </div>
+              <div id="accountList" class="account-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="settings" class="view">
+          <div class="dashboard-layout">
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Users</h2>
+                <span id="userCount" class="quiet-pill">0 users</span>
+              </div>
+              <form id="userForm" class="form-grid">
+                <label class="wide">
+                  <span>Name</span>
+                  <input id="userName" type="text" maxlength="50" required />
+                </label>
+                <label class="wide">
+                  <span>Email / Login</span>
+                  <input id="userEmail" type="email" maxlength="80" placeholder="Optional" />
+                </label>
+                <button class="primary-button wide" type="submit">Add User</button>
+              </form>
+              <div id="userList" class="user-list"></div>
+            </section>
+
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Books & Sharing</h2>
+                <span id="bookCount" class="quiet-pill">0 books</span>
+              </div>
+              <form id="bookForm" class="form-grid">
+                <label class="wide">
+                  <span>Book Name</span>
+                  <input id="bookName" type="text" maxlength="60" required />
+                </label>
+                <button class="primary-button wide" type="submit">Add Book</button>
+              </form>
+              <form id="shareForm" class="form-grid">
+                <label>
+                  <span>Share Current Book With</span>
+                  <select id="shareUserSelect"></select>
+                </label>
+                <button class="ghost-button" type="submit">Share Ledger</button>
+              </form>
+              <div id="bookList" class="book-list"></div>
+            </section>
+          </div>
+
+          <div class="dashboard-layout">
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Appearance</h2>
+              </div>
+              <label>
+                <span>Color Scheme</span>
+                <select id="themeSelect">
+                  <option value="classic">Classic</option>
+                  <option value="slate">Slate</option>
+                  <option value="forest">Forest</option>
+                  <option value="berry">Berry</option>
+                </select>
+              </label>
+            </section>
+
+            <section class="tool-panel">
+              <div class="section-heading">
+                <h2>Export & Demo Tools</h2>
+              </div>
+              <div class="button-grid">
+                <button id="exportWorkbookBtn" class="ghost-button" type="button">Export Spreadsheet</button>
+                <button id="backupZipBtn" class="ghost-button" type="button">Backup App Folder</button>
+                <button id="addDemoBtn" class="ghost-button" type="button">Add Demo Data</button>
+                <button id="deleteDemoBtn" class="ghost-button danger" type="button">Delete Demo Data</button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="transactionDialog" class="modal">
+      <form id="transactionForm" class="modal-content">
+        <div class="section-heading">
+          <h2 id="transactionDialogTitle">Add Transaction</h2>
+          <button id="closeTransactionDialog" class="ghost-button" type="button">Close</button>
+        </div>
+        <input id="transactionId" type="hidden" />
+        <div class="form-grid">
+          <label>
+            <span>Date</span>
+            <input id="txnDate" type="date" required />
+          </label>
+          <label>
+            <span>Type</span>
+            <select id="txnType">
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+              <option value="transfer">Transfer</option>
+            </select>
+          </label>
+          <label>
+            <span>Payee</span>
+            <input id="txnPayee" type="text" maxlength="80" placeholder="Store, person, employer" />
+          </label>
+          <label>
+            <span>Account</span>
+            <select id="txnAccount"></select>
+          </label>
+          <label>
+            <span>Category</span>
+            <select id="txnCategory"></select>
+          </label>
+          <label>
+            <span>Amount</span>
+            <input id="txnAmount" type="number" min="0" step="0.01" required />
+          </label>
+          <label class="wide">
+            <span>Description</span>
+            <input id="txnDescription" type="text" maxlength="100" required />
+          </label>
+          <label class="wide">
+            <span>Notes</span>
+            <textarea id="txnNotes" rows="3" maxlength="500" placeholder="Optional details"></textarea>
+          </label>
+          <label>
+            <span>Pay Period</span>
+            <select id="txnPayPeriod">
+              <option value="first">First</option>
+              <option value="second">Second</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+          <label class="check-row">
+            <input id="txnCleared" type="checkbox" />
+            <span>Cleared</span>
+          </label>
+        </div>
+
+        <section class="split-section">
+          <div class="section-heading">
+            <h2>Split Categories</h2>
+            <button id="addSplitBtn" class="ghost-button" type="button">Add Split</button>
+          </div>
+          <div id="splitRows" class="split-list"></div>
+          <div class="split-total">
+            <span id="splitStatus">No splits</span>
+          </div>
+        </section>
+
+        <button class="primary-button wide" type="submit">
+          <span id="txnSubmitLabel">Save Transaction</span>
+        </button>
+      </form>
+    </dialog>
+
+    <template id="emptyStateTemplate">
+      <div class="empty-state">
+        <strong>No entries yet</strong>
+        <span>Your saved items will appear here.</span>
+      </div>
+    </template>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: budget-ledger
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: AUTH_USERNAME
+        value: admin
+      - key: AUTH_PASSWORD
+        sync: false

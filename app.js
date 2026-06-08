@@ -119,25 +119,16 @@ function bind() {
 }
 
 function base() {
-  const profiles = defaultUserProfiles().map((profile) => ({ ...profile, id: id(), bookId: id() }));
+  const uid = id(), bid = id();
   return {
     version: 4, theme: "classic", currentMonth: thisMonth, periodMode: "month",
-    activeUserId: profiles[0].id, activeBookId: profiles[0].bookId, activeRegisterAccountId: "", registerStartDate: monthStart(thisMonth), registerEndDate: monthEnd(thisMonth),
+    activeUserId: uid, activeBookId: bid, activeRegisterAccountId: "", registerStartDate: monthStart(thisMonth), registerEndDate: monthEnd(thisMonth),
     budgetSort: "warnings",
     transactionStartDate: monthStart(thisMonth), transactionEndDate: monthEnd(thisMonth),
-    users: profiles.map((profile) => ({ id: profile.id, name: profile.name, email: profile.email, role: profile.role })),
-    books: profiles.map((profile) => ({ id: profile.bookId, name: `${profile.name}'s Budget`, ownerUserId: profile.id })),
-    ledgers: Object.fromEntries(profiles.map((profile) => [profile.bookId, ledger({ transactions: [], accounts: [] })]))
+    users: [{ id: uid, name: "Admin", email: "", role: "admin" }],
+    books: [{ id: bid, name: "Admin Budget", ownerUserId: uid }],
+    ledgers: { [bid]: ledger({ transactions: [], accounts: [] }) }
   };
-}
-
-function defaultUserProfiles() {
-  return [
-    { name: "Admin", email: "admin", role: "admin" },
-    { name: "Kyle", email: "kyle", role: "user" },
-    { name: "Jessica", email: "jess", role: "user" },
-    { name: "Ohara", email: "ohara", role: "user" },
-  ];
 }
 
 function load() {
@@ -157,7 +148,6 @@ function normalize(input = {}) {
   s.books = Array.isArray(s.books) && s.books.length ? s.books.map((x) => book(x, s.users[0].id)) : b.books;
   s.ledgers = s.ledgers && typeof s.ledgers === "object" ? s.ledgers : b.ledgers;
   s.books.forEach((bk) => s.ledgers[bk.id] = ledger(s.ledgers[bk.id] || {}));
-  if (shouldSeedDefaultProfiles(input)) ensureDefaultProfiles(s);
   if (!s.users.some((u) => u.id === s.activeUserId)) s.activeUserId = s.users[0].id;
   if (!s.books.some((bk) => bk.id === s.activeBookId)) s.activeBookId = s.books[0].id;
   s.activeRegisterAccountId ||= "";
@@ -167,34 +157,6 @@ function normalize(input = {}) {
   s.transactionStartDate = /^\d{4}-\d{2}-\d{2}$/.test(s.transactionStartDate || "") ? s.transactionStartDate : monthStart(s.currentMonth || thisMonth);
   s.transactionEndDate = /^\d{4}-\d{2}-\d{2}$/.test(s.transactionEndDate || "") ? s.transactionEndDate : monthEnd(s.currentMonth || thisMonth);
   return s;
-}
-
-function shouldSeedDefaultProfiles(input = {}) {
-  if (currentLogin.role === "admin") return true;
-  const users = Array.isArray(input.users) ? input.users : [];
-  return !users.length || users.some((entry) => entry.role === "admin");
-}
-
-function ensureDefaultProfiles(s) {
-  defaultUserProfiles().forEach((profile) => {
-    let u = s.users.find((entry) => entry.email.toLowerCase() === profile.email);
-    if (!u && profile.email === "admin") {
-      u = s.users.find((entry) => !entry.email && entry.role === "admin");
-      if (u) u.email = "admin";
-    }
-    if (!u) {
-      u = user(profile);
-      s.users.push(u);
-    }
-    u.name = profile.name;
-    u.role = profile.role;
-    let b = s.books.find((entry) => entry.ownerUserId === u.id);
-    if (!b) {
-      b = book({ name: `${profile.name}'s Budget`, ownerUserId: u.id }, u.id);
-      s.books.push(b);
-    }
-    s.ledgers[b.id] = ledger(s.ledgers[b.id] || { transactions: [], accounts: [] });
-  });
 }
 
 async function loadSession() {
@@ -799,21 +761,21 @@ function exportState() {
   };
 }
 function exportJson() { download(new Blob([JSON.stringify(exportState(), null, 2)], { type: "application/json" }), `budget-ledger-backup-${stamp()}.json`); }
-function csvHeaders() { return ["section","date","type","payee","description","account","toAccount","category","amount","cleared","reconciled","notes","name","accountType","openingBalance","monthlyLimit","period","group","cadence","nextDate"]; }
+function csvHeaders() { return ["section","id","date","type","payee","description","account","toAccount","category","amount","cleared","reconciled","notes","payPeriod","splitsJson","name","accountType","openingBalance","value","owed","statementDate","statementBalance","monthlyLimit","period","group","cadence","nextDate","active"]; }
 function csvRows(includeExamples = false) {
   const accountName = (id) => L().accounts.find((a) => a.id === id)?.name || "";
   const rows = [csvHeaders()];
   if (includeExamples) {
-    rows.push(["account","","","","","","","","","","","","Checking","asset","1000","","","","",""]);
-    rows.push(["budget","","","","","","","Grocery","","","","","","","","650","month","expense","",""]);
-    rows.push(["recurring","","expense","","Rent","Checking","","Housing","1625","","","","Rent","","","","","","monthly","2026-07-01"]);
-    rows.push(["transaction","2026-07-01","expense","Grocery Store","Weekly groceries","Checking","","Grocery","125.50","yes","no","Example row","","","","","","",""]);
+    rows.push(["account","","","","","","","","","","","","","","","Checking","asset","1000","1000","0","","","","","","","",""]);
+    rows.push(["budget","","","","","","","","Grocery","","","","","","","Grocery","","","","","","","650","month","expense","","",""]);
+    rows.push(["recurring","","","expense","","Rent","Checking","","Housing","1625","","","","","","Rent","","","","","","","","","","monthly","2026-07-01","true"]);
+    rows.push(["transaction","","2026-07-01","expense","Grocery Store","Weekly groceries","Checking","","Grocery","125.50","yes","no","Example row","none","[]","","","","","","","","","","","","",""]);
     return rows;
   }
-  L().accounts.forEach((a) => rows.push(["account","","","","","","","","","","","",a.name,a.type,a.openingBalance,"","","","",""]));
-  L().budgets.forEach((b) => rows.push(["budget","","","","","","",b.category,"","","","","","","",b.monthlyLimit,b.period,b.group,"",""]));
-  L().recurring.forEach((r) => rows.push(["recurring","",r.type,"",r.name,accountName(r.accountId),accountName(r.toAccountId),r.category,r.amount,"","","",r.name,"","","","","",r.cadence,r.nextDate]));
-  L().transactions.forEach((t) => rows.push(["transaction",t.date,t.type,t.payee,t.description,accountName(t.accountId),accountName(t.toAccountId),t.category,t.amount,t.cleared,t.reconciled,t.notes,"","","","","","","",""]));
+  L().accounts.forEach((a) => rows.push(["account",a.id,"","","","","","","","","","","","","",a.name,a.type,a.openingBalance,a.value,a.owed,a.statementDate,a.statementBalance,"","","","","",""]));
+  L().budgets.forEach((b) => rows.push(["budget",b.id,"","","","","","",b.category,"","","","","","",b.category,"","","","","","",b.monthlyLimit,b.period,b.group,"","",""]));
+  L().recurring.forEach((r) => rows.push(["recurring",r.id,"",r.type,"",r.name,accountName(r.accountId),accountName(r.toAccountId),r.category,r.amount,"","","","","",r.name,"","","","","","","","", "",r.cadence,r.nextDate,r.active]));
+  L().transactions.forEach((t) => rows.push(["transaction",t.id,t.date,t.type,t.payee,t.description,accountName(t.accountId),accountName(t.toAccountId),t.category,t.amount,t.cleared,t.reconciled,t.notes,t.payPeriod,JSON.stringify(t.splits || []),"","","","","","","","","","","","",""]));
   return rows;
 }
 function exportCsv() { download(new Blob([csvRows().map((r) => r.map(csv).join(",")).join("\n")], { type: "text/csv" }), `budget-ledger-${stamp()}.csv`); }
@@ -840,21 +802,37 @@ async function importCsv(e) {
   if (!f) return;
   const rows = parseCsv(await f.text());
   if (rows.length < 2) return;
-  const head = rows[0].map((x) => x.trim().toLowerCase());
+  const head = rows[0].map((x) => String(x || "").replace(/^\uFEFF/, "").trim().toLowerCase());
   const get = (r, k) => {
     const i = head.indexOf(k.toLowerCase());
     return i >= 0 ? r[i] || "" : "";
   };
+  const has = (r, k) => {
+    const i = head.indexOf(k.toLowerCase());
+    return i >= 0 && r[i] !== undefined && String(r[i]).trim() !== "";
+  };
   if (!confirm("Import this CSV into the current book? It can add accounts, budgets, recurring items, and transactions.")) return;
   record();
   const counts = { accounts: 0, budgets: 0, recurring: 0, transactions: 0 };
+  const txnSig = (t) => [t.date,t.type,t.payee,t.description,t.accountId,t.toAccountId,t.category,+t.amount || 0,t.notes].map((x) => String(x ?? "").trim().toLowerCase()).join("|");
+  const recSig = (r) => [r.name,r.type,r.accountId,r.toAccountId,r.category,+r.amount || 0,r.cadence,r.nextDate].map((x) => String(x ?? "").trim().toLowerCase()).join("|");
+  const existingTxnSigs = new Set(L().transactions.map(txnSig));
+  const existingRecSigs = new Set(L().recurring.map(recSig));
   rows.slice(1).forEach((r) => {
     const section = String(get(r, "section") || (get(r, "date") && get(r, "amount") ? "transaction" : "")).trim().toLowerCase();
     if (section === "account") {
       const name = get(r, "name") || get(r, "account");
       if (!name) return;
-      let existing = L().accounts.find((a) => a.name.toLowerCase() === name.toLowerCase());
-      const next = account({ ...existing, name, type: get(r, "accounttype") || get(r, "type"), openingBalance: get(r, "openingbalance") || get(r, "amount") });
+      const rowId = get(r, "id");
+      let existing = L().accounts.find((a) => a.id === rowId) || L().accounts.find((a) => a.name.toLowerCase() === name.toLowerCase());
+      const input = { ...existing, id: existing?.id || rowId || undefined, name };
+      if (has(r, "accounttype") || has(r, "type")) input.type = get(r, "accounttype") || get(r, "type");
+      if (has(r, "openingbalance") || has(r, "amount")) input.openingBalance = get(r, "openingbalance") || get(r, "amount");
+      if (has(r, "value")) input.value = get(r, "value");
+      if (has(r, "owed")) input.owed = get(r, "owed");
+      if (has(r, "statementdate")) input.statementDate = get(r, "statementdate");
+      if (has(r, "statementbalance")) input.statementBalance = get(r, "statementbalance");
+      const next = account(input);
       existing ? Object.assign(existing, next, { id: existing.id }) : L().accounts.push(next);
       counts.accounts++;
       return;
@@ -862,15 +840,22 @@ async function importCsv(e) {
     if (section === "budget") {
       const category = get(r, "category") || get(r, "name");
       if (!category) return;
-      let existing = L().budgets.find((b) => b.category.toLowerCase() === category.toLowerCase());
-      const next = budget({ ...existing, category, monthlyLimit: get(r, "monthlylimit") || get(r, "amount"), period: get(r, "period"), group: get(r, "group") });
+      const rowId = get(r, "id");
+      let existing = L().budgets.find((b) => b.id === rowId) || L().budgets.find((b) => b.category.toLowerCase() === category.toLowerCase());
+      const input = { ...existing, id: existing?.id || rowId || undefined, category };
+      if (has(r, "monthlylimit") || has(r, "amount")) input.monthlyLimit = get(r, "monthlylimit") || get(r, "amount");
+      if (has(r, "period")) input.period = get(r, "period");
+      if (has(r, "group")) input.group = get(r, "group");
+      const next = budget(input);
       existing ? Object.assign(existing, next, { id: existing.id }) : L().budgets.push(next);
       counts.budgets++;
       return;
     }
     if (section === "recurring") {
       const accountId = accountIdFromName(get(r, "account"));
+      const rowId = get(r, "id");
       const row = recurring({
+        id: rowId || undefined,
         name: get(r, "name") || get(r, "description"),
         type: get(r, "type"),
         accountId,
@@ -879,13 +864,22 @@ async function importCsv(e) {
         amount: get(r, "amount"),
         cadence: get(r, "cadence"),
         nextDate: get(r, "nextdate") || get(r, "date"),
+        active: has(r, "active") ? bool(get(r, "active")) : true,
       });
-      if (row.name && row.accountId && row.amount) { L().recurring.push(row); counts.recurring++; }
+      const existing = L().recurring.find((x) => x.id === row.id);
+      const sig = recSig(row);
+      if (row.name && row.accountId && row.amount && (existing || !existingRecSigs.has(sig))) {
+        existing ? Object.assign(existing, row, { id: existing.id }) : L().recurring.push(row);
+        existingRecSigs.add(sig);
+        counts.recurring++;
+      }
       return;
     }
     if (section === "transaction" || !section) {
       const accountId = accountIdFromName(get(r, "account"));
+      const rowId = get(r, "id");
       const row = txn({
+        id: rowId || undefined,
         date: get(r,"date"),
         type: get(r,"type"),
         payee: get(r,"payee"),
@@ -897,8 +891,16 @@ async function importCsv(e) {
         cleared: bool(get(r,"cleared")),
         reconciled: bool(get(r,"reconciled")),
         notes: get(r,"notes"),
+        payPeriod: get(r,"payperiod") || "none",
+        splits: json(get(r,"splitsjson")) || [],
       });
-      if (row.accountId && row.amount) { L().transactions.push(row); counts.transactions++; }
+      const existing = L().transactions.find((x) => x.id === row.id);
+      const sig = txnSig(row);
+      if (row.accountId && row.amount && (existing || !existingTxnSigs.has(sig))) {
+        existing ? Object.assign(existing, row, { id: existing.id }) : L().transactions.push(row);
+        existingTxnSigs.add(sig);
+        counts.transactions++;
+      }
     }
   });
   save();
@@ -924,7 +926,19 @@ async function importSpreadsheet(e) {
     note(error.message || "Spreadsheet import failed.");
   }
 }
-async function postDownload(url, name) { try { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(exportState()) }); if (!r.ok) throw 0; download(await r.blob(), name); } catch { note("Export failed."); } }
+async function postDownload(url, name) {
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(exportState()) });
+    if (!r.ok) {
+      let message = "Export failed.";
+      try { message = (await r.json()).message || message; } catch {}
+      throw new Error(message);
+    }
+    download(await r.blob(), name);
+  } catch (error) {
+    note(error.message || "Export failed.");
+  }
+}
 
 function progress(b, spent) { const l = limit(b), pct = l ? Math.min(spent / l * 100, 100) : 0; return `<article class="progress-item"><div class="item-row"><div><div class="item-title">${esc(b.category)}</div><div class="item-meta">Budgeted ${money(l)} / Spent ${money(spent)}</div></div><div class="amount ${l - spent < 0 ? "expense" : "income"}">${money(l - spent)}</div></div><div class="progress-track"><div class="progress-fill ${pct >= 100 ? "over" : pct >= 80 ? "warning" : ""}" style="width:${pct}%"></div></div></article>`; }
 function bar(label, amount, max) { return `<article class="progress-item"><div class="item-row"><div class="item-title">${esc(label)}</div><div class="amount expense">${money(amount)}</div></div><div class="progress-track"><div class="progress-fill warning" style="width:${Math.max(amount / max * 100, 8)}%"></div></div></article>`; }

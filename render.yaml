@@ -11,6 +11,13 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: AUTH_USERNAME
-        value: admin
+        sync: false
       - key: AUTH_PASSWORD
         sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: budget-ledger-db
+          property: connectionString
+databases:
+  - name: budget-ledger-db
+    plan: free

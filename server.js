@@ -4,13 +4,15 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const zlib = require("node:zlib");
+const { Pool } = require("pg");
 const { exec } = require("node:child_process");
 
 const root = __dirname;
 const configPath = path.join(root, "budget-app.config.json");
-const authConfigPath = path.join(root, "auth.config.local.json");
+const authConfigPath = process.env.AUTH_CONFIG_PATH || path.join(root, "auth.config.local.json");
 const dataPath = process.env.DATA_PATH || path.join(root, "budget-ledger-data.json");
 const worksheetTemplatePath = path.join(root, "templates", "budget-worksheet-template.xlsx");
+const databaseUrl = process.env.DATABASE_URL || "";
 const defaultConfig = {
   port: 4173,
   host: "127.0.0.1",
@@ -31,12 +33,30 @@ const contentTypes = {
 };
 
 const publicPaths = new Set(["/login", "/login.html", "/login.js", "/styles.css", "/assets/jess-simple-budget-ledger-logo.png", "/assets/mobile-login-qr.svg"]);
+const staticPaths = new Map([
+  ["/", "/index.html"],
+  ["/index.html", "/index.html"],
+  ["/login", "/login.html"],
+  ["/login.html", "/login.html"],
+  ["/login.js", "/login.js"],
+  ["/app.js", "/app.js"],
+  ["/styles.css", "/styles.css"],
+  ["/assets/jess-simple-budget-ledger-logo.png", "/assets/jess-simple-budget-ledger-logo.png"],
+  ["/assets/mobile-login-qr.svg", "/assets/mobile-login-qr.svg"],
+]);
 const sessions = new Map();
 const sessionTtlMs = 1000 * 60 * 60 * 12;
 const sessionCookie = "budget_session";
 const maxLoginBody = 10_000;
 const maxExportBody = 20_000_000;
 const maxStateBody = 20_000_000;
+const maxWorkbookInflatedBytes = 50_000_000;
+const maxWorkbookFiles = 250;
+const maxLoginFailures = 8;
+const loginWindowMs = 1000 * 60 * 15;
+const loginAttempts = new Map();
+let dbPool = null;
+let auth = null;
 
 function readConfig() {
   try {
@@ -54,59 +74,40 @@ function readAuthConfig() {
   const envIterations = Number(process.env.AUTH_PASSWORD_ITERATIONS || 210000);
 
   if (envUsername && envPassword) {
-    return normalizeAuthUsers({ users: withDefaultCredentials([createCredential(envUsername, envPassword, envIterations, "admin")]) });
+    return normalizeAuthUsers({ users: [createCredential(envUsername, envPassword, envIterations, "admin")] });
   }
 
   if (envUsername && envHash && envSalt) {
-    return normalizeAuthUsers({ users: withDefaultCredentials([{
+    return normalizeAuthUsers({ users: [{
       username: envUsername,
       hash: envHash,
       salt: envSalt,
       iterations: envIterations,
       digest: process.env.AUTH_PASSWORD_DIGEST || "sha256",
       role: "admin",
-    }]) });
+    }] });
   }
 
   try {
     const saved = JSON.parse(fs.readFileSync(authConfigPath, "utf8"));
-    if (Array.isArray(saved.users) && saved.users.length) return normalizeAuthUsers({ users: withDefaultCredentials(saved.users) });
+    if (Array.isArray(saved.users) && saved.users.length) return normalizeAuthUsers(saved);
     if (saved.username && saved.hash && saved.salt) {
-      return normalizeAuthUsers({ users: withDefaultCredentials([{
+      return normalizeAuthUsers({ users: [{
         username: saved.username,
         hash: saved.hash,
         salt: saved.salt,
         iterations: Number(saved.iterations || 210000),
         digest: saved.digest || "sha256",
         role: "admin",
-      }]) });
+      }] });
     }
   } catch {
     // Intentionally ignored so the startup error can explain every valid option.
   }
 
-  return normalizeAuthUsers({ users: withDefaultCredentials([]) });
-}
-
-function defaultLoginSeeds() {
-  return [
-    { username: "admin", password: "ChangeMe123!", role: "admin" },
-    { username: "kyle", password: "xxxxxxxxxx", role: "user" },
-    { username: "jess", password: "ilovekyle!", role: "user" },
-    { username: "ohara", password: "ilovejosh!", role: "user" },
-  ];
-}
-
-function withDefaultCredentials(users) {
-  const output = Array.isArray(users) ? [...users] : [];
-  const existing = new Set(output.map((user) => String(user.username || "").trim().toLowerCase()));
-  defaultLoginSeeds().forEach((seed) => {
-    if (!existing.has(seed.username)) {
-      output.push(createCredential(seed.username, seed.password, 210000, seed.role));
-      existing.add(seed.username);
-    }
-  });
-  return output;
+  throw new Error(
+    "Authentication is not configured. Set AUTH_USERNAME and AUTH_PASSWORD for the first admin, or restore saved auth storage.",
+  );
 }
 
 function normalizeAuthUsers(input = {}) {
@@ -155,7 +156,68 @@ function verifyLogin(username, password) {
   return safeEqualHex(attempted, user.hash) ? user : null;
 }
 
-function writeAuthConfig() {
+async function initStorage() {
+  if (databaseUrl) {
+    dbPool = new Pool({
+      connectionString: databaseUrl,
+      ssl: process.env.PGSSLMODE === "disable" ? false : process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+    });
+    await dbPool.query(`
+      create table if not exists budget_app_kv (
+        key text primary key,
+        value jsonb not null,
+        updated_at timestamptz not null default now()
+      )
+    `);
+  }
+
+  if (!config.authRequired) return;
+  const storedAuth = await readStoredAuth();
+  const normalizedAuth = storedAuth ? normalizeAuthUsers(storedAuth) : readAuthConfig();
+  const migrated = removeSeededLoginUsers(normalizedAuth);
+  auth = migrated.auth;
+  if (!storedAuth || migrated.changed) await writeAuthConfig();
+}
+
+function removeSeededLoginUsers(input) {
+  const seededUsers = new Set(["kyle", "jess", "ohara"]);
+  const users = input.users.filter((user) => !seededUsers.has(String(user.username || "").toLowerCase()));
+  if (!users.length || !users.some((user) => user.role === "admin")) return { auth: input, changed: false };
+  return { auth: { users }, changed: users.length !== input.users.length };
+}
+
+async function readKv(key) {
+  if (!dbPool) return null;
+  const result = await dbPool.query("select value from budget_app_kv where key = $1", [key]);
+  return result.rows[0]?.value || null;
+}
+
+async function writeKv(key, value) {
+  if (!dbPool) return;
+  await dbPool.query(
+    `insert into budget_app_kv (key, value, updated_at)
+     values ($1, $2::jsonb, now())
+     on conflict (key) do update set value = excluded.value, updated_at = now()`,
+    [key, JSON.stringify(value)],
+  );
+}
+
+async function readStoredAuth() {
+  if (dbPool) return readKv("auth");
+  try {
+    const saved = JSON.parse(fs.readFileSync(authConfigPath, "utf8"));
+    return saved?.users ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeAuthConfig() {
+  if (!auth) return;
+  if (dbPool) {
+    await writeKv("auth", { users: auth.users });
+    return;
+  }
   fs.writeFileSync(authConfigPath, JSON.stringify({ users: auth.users }, null, 2));
 }
 
@@ -254,16 +316,20 @@ function getSession(req) {
     return null;
   }
 
+  const user = auth?.users.find((entry) => entry.username === session.username);
+  if (!user) {
+    sessions.delete(token);
+    return null;
+  }
+
   session.expiresAt = Date.now() + sessionTtlMs;
-  return session;
+  return { username: user.username, role: user.role || "user", expiresAt: session.expiresAt };
 }
 
 function createSession(req, res, username) {
-  const user = auth.users.find((entry) => entry.username === username);
   const token = crypto.randomBytes(32).toString("base64url");
   sessions.set(token, {
     username,
-    role: user?.role || "user",
     expiresAt: Date.now() + sessionTtlMs,
   });
   res.setHeader("Set-Cookie", buildCookie(req, token, Math.floor(sessionTtlMs / 1000)));
@@ -275,14 +341,75 @@ function clearSession(req, res) {
   res.setHeader("Set-Cookie", buildCookie(req, "", 0));
 }
 
+function revokeSessions(username = "") {
+  for (const [token, session] of sessions) {
+    if (!username || session.username === username) sessions.delete(token);
+  }
+}
+
 function resolveRequestPath(urlPath) {
   const cleanPath = decodeURIComponent(urlPath.split("?")[0]);
-  const requested = cleanPath === "/" ? "/index.html" : cleanPath;
-  const normalized = requested === "/login" ? "/login.html" : requested;
+  const normalized = staticPaths.get(cleanPath);
+  if (!normalized) return null;
   const resolved = path.resolve(root, `.${normalized}`);
   const relative = path.relative(root, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
   return resolved;
+}
+
+function requestOrigin(req) {
+  const proto = String(req.headers["x-forwarded-proto"] || (isSecureRequest(req) ? "https" : "http"))
+    .split(",")[0]
+    .trim();
+  return `${proto}://${req.headers.host || "localhost"}`;
+}
+
+function sameOriginRequest(req) {
+  const origin = String(req.headers.origin || "");
+  if (!origin) return true;
+  const allowed = new Set([requestOrigin(req)]);
+  if (process.env.APP_ORIGIN) allowed.add(process.env.APP_ORIGIN.replace(/\/+$/, ""));
+  try {
+    return allowed.has(new URL(origin).origin);
+  } catch {
+    return false;
+  }
+}
+
+function clientIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown")
+    .split(",")[0]
+    .trim();
+}
+
+function loginAttemptKey(req, username) {
+  return `${clientIp(req)}:${String(username || "").toLowerCase()}`;
+}
+
+function isLoginLimited(req, username) {
+  const key = loginAttemptKey(req, username);
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || entry.resetAt <= now) {
+    loginAttempts.delete(key);
+    return false;
+  }
+  return entry.count >= maxLoginFailures;
+}
+
+function recordLoginFailure(req, username) {
+  const key = loginAttemptKey(req, username);
+  const now = Date.now();
+  const entry = loginAttempts.get(key);
+  if (!entry || entry.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + loginWindowMs });
+    return;
+  }
+  entry.count += 1;
+}
+
+function clearLoginFailures(req, username) {
+  loginAttempts.delete(loginAttemptKey(req, username));
 }
 
 function openBrowser(url) {
@@ -348,14 +475,22 @@ async function handleLogin(req, res) {
     const payload = contentType.includes("application/json")
       ? JSON.parse(raw || "{}")
       : Object.fromEntries(new URLSearchParams(raw));
+    const username = String(payload.username || "").trim();
 
-    const user = verifyLogin(String(payload.username || ""), String(payload.password || ""));
+    if (isLoginLimited(req, username)) {
+      sendJson(req, res, 429, { ok: false, message: "Too many login attempts. Wait a few minutes and try again." });
+      return;
+    }
+
+    const user = verifyLogin(username, String(payload.password || ""));
     if (user) {
+      clearLoginFailures(req, username);
       createSession(req, res, user.username);
       sendJson(req, res, 200, { ok: true, username: user.username });
       return;
     }
 
+    recordLoginFailure(req, username);
     sendJson(req, res, 401, { ok: false, message: "Invalid username or password." });
   } catch {
     sendJson(req, res, 400, { ok: false, message: "Unable to process login." });
@@ -415,7 +550,8 @@ async function handleSaveAuthUser(req, res) {
       return;
     }
 
-    writeAuthConfig();
+    await writeAuthConfig();
+    if (existingIndex !== -1) revokeSessions(previousUsername);
     sendJson(req, res, 200, { ok: true, users: publicAuthUsers() });
   } catch {
     sendJson(req, res, 400, { ok: false, message: "Unable to save login user." });
@@ -449,7 +585,8 @@ async function handleDeleteAuthUser(req, res) {
     }
 
     auth.users = nextUsers;
-    writeAuthConfig();
+    await writeAuthConfig();
+    revokeSessions(username);
     sendJson(req, res, 200, { ok: true, users: publicAuthUsers() });
   } catch {
     sendJson(req, res, 400, { ok: false, message: "Unable to delete login user." });
@@ -481,7 +618,8 @@ async function handleChangeOwnPassword(req, res, session) {
     }
 
     auth.users[index] = createCredential(existing.username, newPassword, existing.iterations || 210000, existing.role);
-    writeAuthConfig();
+    await writeAuthConfig();
+    revokeSessions(existing.username);
     sendJson(req, res, 200, { ok: true });
   } catch {
     sendJson(req, res, 400, { ok: false, message: "Unable to change password." });
@@ -500,10 +638,36 @@ function serveFile(req, res, filePath) {
   });
 }
 
-async function handleWorkbookExport(req, res) {
+async function stateForDownload(req, session) {
+  let requested = {};
   try {
-    const raw = await readExportBody(req);
-    const state = JSON.parse(raw || "{}");
+    requested = JSON.parse((await readExportBody(req)) || "{}");
+  } catch {
+    requested = {};
+  }
+
+  const saved = await readSavedState();
+  if (!auth) return saved || requested;
+
+  if (session.role !== "admin") {
+    const fullState = saved || emptySavedState();
+    return scopedStateForSession(fullState, session);
+  }
+
+  if (saved) {
+    const state = { ...saved };
+    if (requested.activeBookId && saved.ledgers?.[requested.activeBookId]) state.activeBookId = requested.activeBookId;
+    if (requested.currentMonth) state.currentMonth = requested.currentMonth;
+    if (requested.periodMode) state.periodMode = requested.periodMode;
+    return state;
+  }
+
+  return requested;
+}
+
+async function handleWorkbookExport(req, res, session) {
+  try {
+    const state = await stateForDownload(req, session);
     const data = buildWorkbook(state);
     send(req, res, 200, data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", {
       "Content-Disposition": 'attachment; filename="budget-ledger-export.xlsx"',
@@ -515,7 +679,7 @@ async function handleWorkbookExport(req, res) {
 
 async function handleBackupZip(req, res) {
   try {
-    const state = await readExportBody(req);
+    const state = JSON.stringify((await readSavedState()) || emptySavedState(), null, 2);
     const files = {};
     for (const name of [
       "index.html",
@@ -635,6 +799,7 @@ function fillWorksheetTemplate(sourceFiles, state = {}) {
   const sheets = templateSheets(files);
   const monthSheets = sheets.filter((sheet) => !/^(aum|to copy worksheets|sheet1)$/i.test(sheet.name)).slice(0, 3);
   const months = transactionMonths(transactions).slice(0, monthSheets.length || 1);
+  assertWorksheetExportFits(transactions, monthSheets.length);
 
   if (files["xl/workbook.xml"] && monthSheets.length) {
     let workbook = files["xl/workbook.xml"].toString("utf8");
@@ -665,7 +830,32 @@ function fillWorksheetTemplate(sourceFiles, state = {}) {
   if (files["xl/_rels/workbook.xml.rels"]) {
     files["xl/_rels/workbook.xml.rels"] = Buffer.from(files["xl/_rels/workbook.xml.rels"].toString("utf8").replace(/<Relationship\b[^>]*Target="calcChain\.xml"[^>]*\/>/g, ""), "utf8");
   }
+  forceWorkbookRecalc(files);
   return files;
+}
+
+function assertWorksheetExportFits(transactions, sheetCount) {
+  if (!sheetCount) return;
+  const months = transactionMonths(transactions);
+  if (months.length > sheetCount) {
+    throw new Error(`The legacy spreadsheet template only has ${sheetCount} month tab(s). Export CSV for full data, or narrow the book to ${sheetCount} month(s) before spreadsheet export.`);
+  }
+  const maxRowsPerMonth = 92;
+  for (const month of months) {
+    const count = transactions.filter((t) => monthKey(t.date) === month).length;
+    if (count > maxRowsPerMonth) {
+      throw new Error(`The ${monthSheetName(month)} worksheet can hold ${maxRowsPerMonth} transactions, but this book has ${count}. Export CSV for full data.`);
+    }
+  }
+}
+
+function forceWorkbookRecalc(files) {
+  if (!files["xl/workbook.xml"]) return;
+  let workbook = files["xl/workbook.xml"].toString("utf8");
+  const calc = '<calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>';
+  if (/<calcPr\b[^>]*\/>/.test(workbook)) workbook = workbook.replace(/<calcPr\b[^>]*\/>/, calc);
+  else workbook = workbook.replace("</workbook>", `${calc}</workbook>`);
+  files["xl/workbook.xml"] = Buffer.from(workbook, "utf8");
 }
 
 function primaryLedger(state = {}) {
@@ -764,7 +954,7 @@ function parseBudgetWorksheet(buffer) {
   const strings = sharedStrings(files);
   const sheets = templateSheets(files);
   const ledger = { transactions: [], accounts: [], budgets: [], recurring: [] };
-  const categories = new Set();
+  const categories = new Map();
 
   const aum = sheets.find((sheet) => /^aum$/i.test(sheet.name));
   if (aum && files[aum.path]) {
@@ -785,9 +975,9 @@ function parseBudgetWorksheet(buffer) {
       importMonthlyGrid(cells, sheet.name, ["G","H","I","J","K"], defaultAccount.id, ledger, categories);
     });
 
-  for (const category of categories) {
+  for (const [category, monthlyLimit] of categories) {
     if (!/^income$/i.test(category) && !ledger.budgets.some((b) => b.category.toLowerCase() === category.toLowerCase())) {
-      ledger.budgets.push(importBudget({ category, monthlyLimit: 0, period: "month", group: "expense" }));
+      ledger.budgets.push(importBudget({ category, monthlyLimit, period: "month", group: "expense" }));
     }
   }
 
@@ -813,10 +1003,9 @@ function importAumAccounts(sheetXml, strings, ledger) {
     const assetValue = numberValue(cellValue(cells, `J${row}`));
     const liabilityValue = numberValue(cellValue(cells, `I${row}`));
     if (!name || skip.test(name)) continue;
-    if (!assetValue && !liabilityValue) continue;
-    if (/^[A-Z\s]+$/.test(name) && name.length < 20) continue;
     if (assetValue) ledger.accounts.push(importAccount({ name, type: "asset", openingBalance: assetValue }));
     else if (liabilityValue) ledger.accounts.push(importAccount({ name, type: "liability", openingBalance: liabilityValue }));
+    else ledger.accounts.push(importAccount({ name, type: "asset", openingBalance: 0 }));
   }
 }
 
@@ -829,18 +1018,21 @@ function importMonthlyGrid(cells, sheetName, cols, accountId, ledger, categories
     const out = numberValue(cellValue(cells, `${cols[3]}${row}`));
     const input = numberValue(cellValue(cells, `${cols[4]}${row}`));
 
-    if (typeof first === "string" && cleanCategory(first)) {
-      category = cleanCategory(first);
+    const rowCategory = cleanCategory(first);
+    const date = worksheetDate(first, sheetName);
+    if (!date && rowCategory) {
+      category = rowCategory;
+      const budgetAmount = rowBudgetAmount(cells, cols, row);
+      if (budgetAmount && !/^income$/i.test(category)) categories.set(category, Math.max(categories.get(category) || 0, budgetAmount));
       continue;
     }
 
-    const date = worksheetDate(first, sheetName);
     const amount = input || out;
     if (!date || !amount || !description) continue;
     if (/^(other|amt budgeted|income|giving|savings|utilities|debt pmt|fuel|grocery|entertainment|health|travel)$/i.test(description)) continue;
 
     const finalCategory = category || "Imported";
-    categories.add(finalCategory);
+    if (!categories.has(finalCategory)) categories.set(finalCategory, 0);
     ledger.transactions.push(importTxn({
       date,
       type: input ? "income" : "expense",
@@ -852,6 +1044,10 @@ function importMonthlyGrid(cells, sheetName, cols, accountId, ledger, categories
       reconciled: boolText(cleared),
     }));
   }
+}
+
+function rowBudgetAmount(cells, cols, row) {
+  return Math.max(...cols.slice(1).map((col) => numberValue(cellValue(cells, `${col}${row}`))));
 }
 
 function importAccount({ name, type, openingBalance }) {
@@ -907,8 +1103,10 @@ function parseZip(buffer) {
   }
   if (eocd === -1) throw new Error("Invalid workbook file.");
   const count = buffer.readUInt16LE(eocd + 10);
+  if (count > maxWorkbookFiles) throw new Error("Workbook has too many internal files.");
   let offset = buffer.readUInt32LE(eocd + 16);
   const files = {};
+  let inflatedBytes = 0;
   for (let index = 0; index < count; index++) {
     if (buffer.readUInt32LE(offset) !== 0x02014b50) throw new Error("Invalid workbook directory.");
     const method = buffer.readUInt16LE(offset + 10);
@@ -925,6 +1123,8 @@ function parseZip(buffer) {
     if (method === 0) files[name] = Buffer.from(compressed);
     else if (method === 8) files[name] = zlib.inflateRawSync(compressed);
     else throw new Error("Unsupported workbook compression.");
+    inflatedBytes += files[name].length;
+    if (inflatedBytes > maxWorkbookInflatedBytes) throw new Error("Workbook is too large after decompression.");
     offset += 46 + nameLength + extraLength + commentLength;
   }
   return files;
@@ -1027,7 +1227,13 @@ function worksheetDate(value, sheetName) {
     return new Date((value - 25569) * 86400000).toISOString().slice(0, 10);
   }
   const raw = cleanText(value);
+  const month = monthFromSheetName(sheetName);
+  if (month && /^\d{1,2}$/.test(raw)) {
+    const day = Number(raw);
+    if (day >= 1 && day <= 31) return `${month}-${String(day).padStart(2, "0")}`;
+  }
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{1,2}$/.test(raw)) return "";
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
   return "";
@@ -1181,9 +1387,13 @@ function emptySavedState() {
   return { version: 4, theme: "classic", users: [], books: [], ledgers: {} };
 }
 
-function readSavedState() {
-  if (!fs.existsSync(dataPath)) return null;
-  const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+async function readSavedState() {
+  const state = dbPool
+    ? await readKv("state")
+    : fs.existsSync(dataPath)
+      ? JSON.parse(fs.readFileSync(dataPath, "utf8"))
+      : null;
+  if (!state) return null;
   const normalized = {
     ...emptySavedState(),
     ...state,
@@ -1191,48 +1401,20 @@ function readSavedState() {
     books: Array.isArray(state.books) ? state.books : [],
     ledgers: state.ledgers && typeof state.ledgers === "object" ? state.ledgers : {},
   };
-  ensureDefaultStateProfiles(normalized);
   return normalized;
 }
 
-function writeSavedState(state) {
+async function writeSavedState(state) {
+  if (dbPool) {
+    await writeKv("state", state);
+    return;
+  }
   fs.mkdirSync(path.dirname(dataPath), { recursive: true });
   fs.writeFileSync(dataPath, JSON.stringify(state, null, 2));
 }
 
 function blankLedger() {
   return { transactions: [], budgets: [], accounts: [], recurring: [] };
-}
-
-function defaultStateProfiles() {
-  return [
-    { name: "Admin", email: "admin", role: "admin" },
-    { name: "Kyle", email: "kyle", role: "user" },
-    { name: "Jessica", email: "jess", role: "user" },
-    { name: "Ohara", email: "ohara", role: "user" },
-  ];
-}
-
-function ensureDefaultStateProfiles(state) {
-  defaultStateProfiles().forEach((profile) => {
-    let user = state.users.find((entry) => String(entry.email || "").toLowerCase() === profile.email);
-    if (!user && profile.email === "admin") {
-      user = state.users.find((entry) => !entry.email && entry.role === "admin");
-      if (user) user.email = "admin";
-    }
-    if (!user) {
-      user = { id: newId(), name: profile.name, email: profile.email, role: profile.role };
-      state.users.push(user);
-    }
-    user.name = profile.name;
-    user.role = profile.role;
-    let book = state.books.find((entry) => entry.ownerUserId === user.id);
-    if (!book) {
-      book = { id: newId(), name: `${profile.name}'s Budget`, ownerUserId: user.id };
-      state.books.push(book);
-    }
-    state.ledgers[book.id] ||= blankLedger();
-  });
 }
 
 function ensureSessionUserBook(state, session, incoming = {}) {
@@ -1319,12 +1501,12 @@ function mergeScopedState(fullState, incoming, session) {
 
 async function handleGetState(req, res, session) {
   try {
-    const state = readSavedState();
+    const state = await readSavedState();
     if (!state) {
       if (auth && session.role !== "admin") {
         const created = emptySavedState();
         const scoped = scopedStateForSession(created, session);
-        writeSavedState(created);
+        await writeSavedState(created);
         sendJson(req, res, 200, { ok: true, state: scoped });
         return;
       }
@@ -1334,7 +1516,7 @@ async function handleGetState(req, res, session) {
 
     if (auth && session.role !== "admin") {
       const scoped = scopedStateForSession(state, session);
-      writeSavedState(state);
+      await writeSavedState(state);
       sendJson(req, res, 200, { ok: true, state: scoped });
       return;
     }
@@ -1351,13 +1533,13 @@ async function handlePutState(req, res, session) {
     const state = JSON.parse(raw || "{}");
 
     if (auth && session.role !== "admin") {
-      const fullState = readSavedState() || emptySavedState();
-      writeSavedState(mergeScopedState(fullState, state, session));
+      const fullState = (await readSavedState()) || emptySavedState();
+      await writeSavedState(mergeScopedState(fullState, state, session));
       sendJson(req, res, 200, { ok: true });
       return;
     }
 
-    writeSavedState(state);
+    await writeSavedState(state);
     sendJson(req, res, 200, { ok: true });
   } catch {
     sendJson(req, res, 400, { ok: false, message: "Saved state could not be written." });
@@ -1428,7 +1610,6 @@ function openExistingAppOrReport(error) {
 }
 
 const config = readConfig();
-const auth = config.authRequired ? readAuthConfig() : null;
 const port = Number(process.env.PORT || config.port || defaultConfig.port);
 const host = process.env.HOST || (process.env.PORT ? "0.0.0.0" : config.host || defaultConfig.host);
 const shouldOpenBrowser =
@@ -1447,6 +1628,11 @@ const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   const pathname = requestUrl.pathname;
   const session = auth ? getSession(req) : { username: "local" };
+
+  if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(req.method || "GET") && !sameOriginRequest(req)) {
+    sendJson(req, res, 403, { ok: false, message: "Request origin is not allowed." });
+    return;
+  }
 
   if (pathname === "/api/login" && req.method === "POST") {
     if (!auth) {
@@ -1535,7 +1721,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/api/export-workbook" && req.method === "POST") {
-    await handleWorkbookExport(req, res);
+    await handleWorkbookExport(req, res, session);
     return;
   }
 
@@ -1545,6 +1731,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === "/api/backup-zip" && req.method === "POST") {
+    if (auth && session.role !== "admin") {
+      sendJson(req, res, 403, { ok: false, message: "Admin access required." });
+      return;
+    }
     await handleBackupZip(req, res);
     return;
   }
@@ -1563,15 +1753,6 @@ const server = http.createServer(async (req, res) => {
   serveFile(req, res, filePath);
 });
 
-server.listen(port, host, () => {
-  const url = `http://${host}:${port}`;
-  console.log(`Budget Ledger running at ${url}`);
-  console.log(auth ? `Authentication enabled for ${auth.users.length} login user(s).` : "Authentication disabled.");
-  console.log("Edit budget-app.config.json to change the local port.");
-  console.log("Press Ctrl+C to stop the server.");
-  if (shouldOpenBrowser) openBrowser(url);
-});
-
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
     openExistingAppOrReport(error);
@@ -1580,3 +1761,21 @@ server.on("error", (error) => {
     process.exit(1);
   }
 });
+
+startServer().catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
+
+async function startServer() {
+  await initStorage();
+  server.listen(port, host, () => {
+    const url = `http://${host}:${port}`;
+    console.log(`Budget Ledger running at ${url}`);
+    console.log(auth ? `Authentication enabled for ${auth.users.length} login user(s).` : "Authentication disabled.");
+    console.log(dbPool ? "Storage: Postgres." : "Storage: local JSON file.");
+    console.log("Edit budget-app.config.json to change the local port.");
+    console.log("Press Ctrl+C to stop the server.");
+    if (shouldOpenBrowser) openBrowser(url);
+  });
+}

@@ -673,6 +673,7 @@
                   <li>Expenses subtract from cash accounts or increase what you owe on credit cards.</li>
                   <li>Income adds money to the selected account.</li>
                   <li>Transfers move money between accounts and do not count as spending.</li>
+                  <li>Recurring items are templates. Use Post Due to turn due recurring items into real transactions.</li>
                 </ul>
               </div>
             </article>
@@ -758,7 +759,8 @@
                 <h2>Settings</h2>
                 <p>Admins can add users, assign roles, reset passwords, edit books, delete books, and manage demo data. Standard users can change appearance, change their own password, and import or export their own book data.</p>
                 <ul>
-                  <li>Fresh installs start with Admin plus Kyle, Jessica, and Ohara user logins, each with a separate budget book.</li>
+                  <li>Fresh hosted installs start from the secure admin login configured in Render environment variables.</li>
+                  <li>Admins create additional login users only when needed.</li>
                   <li>Use Security to change the password for the account you are currently logged into.</li>
                   <li>Admins can reset another user's password by editing that user in the Users section.</li>
                   <li>Admins should keep at least one admin login active.</li>
@@ -777,13 +779,13 @@
               </figure>
               <div>
                 <h2>Import & Export</h2>
-                <p>Use CSV Template to download the section-based import layout, Export CSV to download the current book in that same layout, Import CSV to add selected app sections, Import Spreadsheet for the original worksheet format, Export Spreadsheet to return matching data to that worksheet, or Backup App Folder for app files plus current data.</p>
+                <p>Use CSV Template to download the section-based import layout, Export CSV to download the current book in that same layout, Import CSV to add or update selected app sections, Import Spreadsheet for the original worksheet format, Export Spreadsheet to return matching data to that worksheet, or Backup App Folder for an admin-only full app data backup.</p>
                 <ul>
-                  <li>CSV files can include any mix of accounts, budgets, recurring items, and transactions by using the section column.</li>
-                  <li>Export CSV matches the CSV Template columns, so it can be edited and imported back into the app.</li>
+                  <li>CSV files can include any mix of accounts, budgets, recurring items, and transactions by using the section column. Blank cells in existing rows do not intentionally erase fields.</li>
+                  <li>Export CSV matches the CSV Template columns and is the best app-to-app round trip format.</li>
                   <li>Import Spreadsheet reads matching fields from the long-used budget worksheet and adds them to the current book.</li>
-                  <li>Export Spreadsheet keeps the original workbook template, formulas, and formatting where possible.</li>
-                  <li>Backup App Folder downloads the app files, worksheet template, and a JSON state file together.</li>
+                  <li>Export Spreadsheet keeps the original workbook template, formulas, and formatting where possible, but only exports data that fits that legacy workbook.</li>
+                  <li>Backup App Folder is admin-only and downloads app files, the worksheet template, and the saved JSON state together.</li>
                 </ul>
               </div>
             </article>

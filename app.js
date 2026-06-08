@@ -5,6 +5,9 @@ const $ = (id) => document.getElementById(id);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 let syncReady = false;
 let syncTimer;
+let syncInFlight = false;
+let saveVersion = 0;
+let lastSyncedVersion = 0;
 let undo = [];
 let redo = [];
 let toastTimer;
@@ -97,6 +100,8 @@ function bind() {
   el.resetBookForm.onclick = resetBook;
   el.passwordForm.onsubmit = changeOwnPassword;
   el.themeSelect.onchange = () => { record(); state.theme = el.themeSelect.value; document.body.dataset.theme = state.theme; save(); if (syncReady) syncServer(); };
+  window.addEventListener("beforeunload", flushPendingSync);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushPendingSync(); });
   el.exportCsvBtn.onclick = exportCsv;
   el.settingsExportCsvBtn.onclick = exportCsv;
   el.csvTemplateBtn.onclick = downloadCsvTemplate;
@@ -202,7 +207,23 @@ function ledger(x = {}) {
   };
 }
 
-function user(x = {}) { return { id: x.id || id(), name: x.name || "User", email: x.email || "", role: x.role === "admin" ? "admin" : "user", demo: !!x.demo }; }
+function user(x = {}) {
+  return {
+    id: x.id || id(),
+    name: x.name || "User",
+    email: x.email || "",
+    role: x.role === "admin" ? "admin" : "user",
+    theme: themes().includes(x.theme) ? x.theme : "",
+    currentMonth: x.currentMonth || "",
+    periodMode: ["week","month","year"].includes(x.periodMode) ? x.periodMode : "",
+    activeRegisterAccountId: x.activeRegisterAccountId || "",
+    registerStartDate: x.registerStartDate || "",
+    registerEndDate: x.registerEndDate || "",
+    transactionStartDate: x.transactionStartDate || "",
+    transactionEndDate: x.transactionEndDate || "",
+    demo: !!x.demo,
+  };
+}
 function book(x = {}, owner) { return { id: x.id || id(), name: x.name || "Budget Book", ownerUserId: x.ownerUserId || owner, demo: !!x.demo }; }
 function txn(x = {}) { return { id: x.id || id(), date: x.date || today, type: ["expense","income","transfer"].includes(x.type) ? x.type : "expense", payee: x.payee || "", accountId: x.accountId || "", toAccountId: x.toAccountId || "", category: x.category || "Other", description: x.description || x.payee || "Transaction", amount: +x.amount || 0, cleared: !!x.cleared, reconciled: !!x.reconciled, payPeriod: x.payPeriod || "none", notes: x.notes || "", splits: Array.isArray(x.splits) ? x.splits.map(split) : [], demo: !!x.demo }; }
 function split(x = {}) { return { id: x.id || id(), category: x.category || "Other", amount: +x.amount || 0, memo: x.memo || "", type: x.type || "expense" }; }
@@ -231,7 +252,14 @@ function ensureUserBook(u) {
 
 function save() {
   localStorage.setItem(KEY, JSON.stringify(state));
-  if (syncReady) { clearTimeout(syncTimer); syncTimer = setTimeout(syncServer, 500); }
+  saveVersion++;
+  queueServerSync();
+}
+
+function queueServerSync(delay = 500) {
+  if (!syncReady) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncServer, delay);
 }
 async function hydrate() {
   try {
@@ -244,9 +272,12 @@ async function hydrate() {
       state = normalize(body.state);
       ensureLoginIdentity();
       localStorage.setItem(KEY, JSON.stringify(state));
+      saveVersion++;
+      lastSyncedVersion = saveVersion;
     } else {
       state = normalize(load());
       ensureLoginIdentity();
+      saveVersion++;
       syncServer();
     }
   } catch { syncReady = false; }
@@ -256,10 +287,33 @@ async function hydrate() {
   ensureAccess();
 }
 async function syncServer() {
+  if (!syncReady || syncInFlight || saveVersion === lastSyncedVersion) return;
+  const version = saveVersion;
+  const payload = JSON.stringify(state);
+  syncInFlight = true;
   try {
-    const res = await fetch("/api/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) });
+    const res = await fetch("/api/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: payload });
     if (!res.ok) throw 0;
-  } catch { syncReady = false; note("Saved locally. Server sync unavailable."); }
+    lastSyncedVersion = Math.max(lastSyncedVersion, version);
+    if (saveVersion !== version) queueServerSync(0);
+  } catch {
+    note("Saved locally. Retrying server sync.");
+    queueServerSync(5000);
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+function flushPendingSync() {
+  if (!syncReady || saveVersion === lastSyncedVersion) return;
+  clearTimeout(syncTimer);
+  const payload = JSON.stringify(state);
+  if (navigator.sendBeacon) {
+    const ok = navigator.sendBeacon("/api/state", new Blob([payload], { type: "application/json" }));
+    if (ok) lastSyncedVersion = saveVersion;
+    return;
+  }
+  syncServer();
 }
 
 function render() {

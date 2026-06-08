@@ -1715,7 +1715,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === "/api/state" && req.method === "PUT") {
+  if (pathname === "/api/state" && (req.method === "PUT" || req.method === "POST")) {
     await handlePutState(req, res, session);
     return;
   }

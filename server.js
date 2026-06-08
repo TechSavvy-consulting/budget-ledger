@@ -4,6 +4,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const zlib = require("node:zlib");
+const ExcelJS = require("exceljs");
 const { Pool } = require("pg");
 const { exec } = require("node:child_process");
 
@@ -681,7 +682,7 @@ async function stateForDownload(req, session) {
 async function handleWorkbookExport(req, res, session) {
   try {
     const state = await stateForDownload(req, session);
-    const data = buildWorkbook(state);
+    const data = await buildWorkbook(state);
     send(req, res, 200, data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", {
       "Content-Disposition": 'attachment; filename="budget-ledger-export.xlsx"',
     });
@@ -733,11 +734,152 @@ async function handleSpreadsheetImport(req, res) {
   }
 }
 
-function buildWorkbook(state) {
+async function buildWorkbook(state) {
   if (!fs.existsSync(worksheetTemplatePath)) return buildGenericWorkbook(state);
-  const files = parseZip(fs.readFileSync(worksheetTemplatePath));
-  const filled = fillWorksheetTemplate(files, state);
-  return createZip(filled);
+  return buildTemplateWorkbookWithExcelJs(state);
+}
+
+async function buildTemplateWorkbookWithExcelJs(state = {}) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(worksheetTemplatePath);
+  const { book, ledger } = primaryLedger(state);
+  const accounts = Array.isArray(ledger.accounts) ? ledger.accounts : [];
+  const transactions = Array.isArray(ledger.transactions) ? ledger.transactions : [];
+  const monthSheets = workbook.worksheets.filter((sheet) => !/^(aum|to copy worksheets|sheet1)$/i.test(sheet.name));
+  const monthPlans = transactionMonthSheetPlans(transactions);
+  const sheets = ensureExcelJsMonthSheets(workbook, monthSheets, monthPlans);
+
+  sheets.forEach((sheet, index) => {
+    sheet.name = monthPlans[index]?.name || monthSheetName(monthPlans[0]?.month);
+    fillExcelJsMonthlySheet(sheet, monthPlans[index]?.transactions || [], accounts);
+  });
+
+  const aum = workbook.worksheets.find((sheet) => /^aum$/i.test(sheet.name));
+  if (aum) fillExcelJsAumSheet(aum, book, ledger);
+
+  workbook.calcProperties.fullCalcOnLoad = true;
+  workbook.calcProperties.forceFullCalc = true;
+  const data = await workbook.xlsx.writeBuffer();
+  return Buffer.from(data);
+}
+
+function ensureExcelJsMonthSheets(workbook, monthSheets, monthPlans) {
+  if (!monthSheets.length) return [];
+  const needed = monthPlans.length || 1;
+  const output = monthSheets.slice(0, Math.min(monthSheets.length, needed));
+  const source = monthSheets[monthSheets.length - 1];
+  while (output.length < needed) {
+    const target = workbook.addWorksheet(monthPlans[output.length]?.name || monthSheetName(new Date().toISOString().slice(0, 7)));
+    copyExcelJsWorksheet(source, target);
+    output.push(target);
+  }
+  return output;
+}
+
+function copyExcelJsWorksheet(source, target) {
+  target.properties = clonePlain(source.properties || {});
+  target.pageSetup = clonePlain(source.pageSetup || {});
+  target.headerFooter = clonePlain(source.headerFooter || {});
+  target.views = clonePlain(source.views || []);
+  source.columns.forEach((column, index) => {
+    const targetColumn = target.getColumn(index + 1);
+    targetColumn.width = column.width;
+    targetColumn.hidden = column.hidden;
+    targetColumn.style = clonePlain(column.style || {});
+  });
+  source.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+    const targetRow = target.getRow(rowNumber);
+    targetRow.height = row.height;
+    targetRow.hidden = row.hidden;
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      const next = targetRow.getCell(colNumber);
+      next.value = cloneCellValue(cell.value);
+      next.style = clonePlain(cell.style || {});
+      if (cell.numFmt) next.numFmt = cell.numFmt;
+      if (cell.alignment) next.alignment = clonePlain(cell.alignment);
+      if (cell.border) next.border = clonePlain(cell.border);
+      if (cell.fill) next.fill = clonePlain(cell.fill);
+      if (cell.font) next.font = clonePlain(cell.font);
+      if (cell.protection) next.protection = clonePlain(cell.protection);
+    });
+    targetRow.commit?.();
+  });
+  for (const range of source.model?.merges || []) {
+    try { target.mergeCells(range); } catch {}
+  }
+}
+
+function fillExcelJsMonthlySheet(sheet, transactions, accounts) {
+  for (let row = 4; row <= 49; row++) {
+    for (const col of ["A","B","C","D","E","G","H","I","J","K"]) {
+      setExcelJsCell(sheet, `${col}${row}`, null);
+    }
+  }
+
+  const slots = [];
+  for (let row = 4; row <= 49; row++) slots.push({ row, side: "left" });
+  for (let row = 4; row <= 49; row++) slots.push({ row, side: "right" });
+
+  transactions.slice(0, slots.length).forEach((t, index) => {
+    const slot = slots[index];
+    const cols = slot.side === "left" ? ["A","B","C","D","E"] : ["G","H","I","J","K"];
+    const out = t.type === "income" ? null : Number(t.amount || 0);
+    const input = t.type === "income" ? Number(t.amount || 0) : null;
+    const account = accounts.find((a) => a.id === t.accountId)?.name || "";
+    const description = [t.payee || t.description || t.category || "Transaction", account].filter(Boolean).join(" - ");
+    setExcelJsCell(sheet, `${cols[0]}${slot.row}`, excelDateValue(t.date));
+    setExcelJsCell(sheet, `${cols[1]}${slot.row}`, description);
+    setExcelJsCell(sheet, `${cols[2]}${slot.row}`, t.cleared || t.reconciled ? "Y" : null);
+    setExcelJsCell(sheet, `${cols[3]}${slot.row}`, out);
+    setExcelJsCell(sheet, `${cols[4]}${slot.row}`, input);
+  });
+}
+
+function fillExcelJsAumSheet(sheet, book, ledger) {
+  const accounts = Array.isArray(ledger.accounts) ? ledger.accounts : [];
+  const transactions = Array.isArray(ledger.transactions) ? ledger.transactions : [];
+  const assets = accounts.filter((a) => a.type !== "liability");
+  const liabilities = accounts.filter((a) => a.type === "liability");
+
+  setExcelJsCell(sheet, "A1", book?.name || "Household Budget");
+  for (let row = 7; row <= 30; row++) {
+    setExcelJsCell(sheet, `H${row}`, null);
+    setExcelJsCell(sheet, `J${row}`, null);
+  }
+  for (let row = 33; row <= 45; row++) {
+    setExcelJsCell(sheet, `H${row}`, null);
+    setExcelJsCell(sheet, `I${row}`, null);
+  }
+  assets.slice(0, 24).forEach((account, index) => {
+    const row = 7 + index;
+    setExcelJsCell(sheet, `H${row}`, account.name);
+    setExcelJsCell(sheet, `J${row}`, accountBalance(account, transactions, accounts));
+  });
+  liabilities.slice(0, 13).forEach((account, index) => {
+    const row = 33 + index;
+    setExcelJsCell(sheet, `H${row}`, account.name);
+    setExcelJsCell(sheet, `I${row}`, Math.abs(accountBalance(account, transactions, accounts)));
+  });
+}
+
+function setExcelJsCell(sheet, ref, value) {
+  sheet.getCell(ref).value = value === "" ? null : value;
+}
+
+function excelDateValue(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return null;
+  const [year, month, day] = String(date).split("-").map(Number);
+  return new Date(year, month - 1, day, 12);
+}
+
+function cloneCellValue(value) {
+  if (value instanceof Date) return new Date(value.getTime());
+  return clonePlain(value);
+}
+
+function clonePlain(value) {
+  if (value === null || value === undefined || typeof value !== "object") return value;
+  return JSON.parse(JSON.stringify(value));
 }
 
 function buildGenericWorkbook(state) {

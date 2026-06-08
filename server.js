@@ -976,22 +976,32 @@ function cellValue(cells, ref) {
 }
 
 function setSheetCell(sheetXml, ref, value) {
-  const cellPattern = /<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/g;
-  let replaced = false;
-  let next = sheetXml.replace(cellPattern, (cell) => {
-    if (attr(cell, "r") !== ref) return cell;
-    replaced = true;
-    const attrs = cell.match(/^<c\b([^>]*)>/)?.[1] || "";
-    return buildTemplateCell(ref, value, attrs);
-  });
-  if (replaced) return next;
-
   const rowNumber = Number(ref.match(/\d+/)?.[0] || 1);
-  const rowPattern = new RegExp(`(<row\\b(?=[^>]*\\br="${rowNumber}")[^>]*>)([\\s\\S]*?)(</row>)`);
-  if (rowPattern.test(next)) {
-    return next.replace(rowPattern, `$1$2${buildTemplateCell(ref, value)}$3`);
+  const rowPattern = new RegExp(`<row\\b(?=[^>]*\\br="${rowNumber}")[^>]*>[\\s\\S]*?</row>`);
+  if (rowPattern.test(sheetXml)) {
+    return sheetXml.replace(rowPattern, (rowXml) => {
+      const rowAttrs = rowXml.match(/^<row\b([^>]*)>/)?.[1] || ` r="${rowNumber}"`;
+      const cellPattern = /<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/g;
+      const existingCells = rowXml.match(cellPattern) || [];
+      const rowCells = new Map();
+      let targetAttrs = "";
+
+      existingCells.forEach((cell) => {
+        const cellRef = attr(cell, "r");
+        if (!cellRef || Number(cellRef.match(/\d+/)?.[0] || 0) !== rowNumber) return;
+        if (cellRef === ref) targetAttrs = cell.match(/^<c\b([^>]*)>/)?.[1] || "";
+        else rowCells.set(cellRef, cell);
+      });
+
+      rowCells.set(ref, buildTemplateCell(ref, value, targetAttrs));
+      const sorted = [...rowCells.entries()]
+        .sort(([left], [right]) => cellColumnIndex(left) - cellColumnIndex(right))
+        .map(([, cell]) => cell)
+        .join("");
+      return `<row${rowAttrs}>${sorted}</row>`;
+    });
   }
-  return next.replace("</sheetData>", `<row r="${rowNumber}">${buildTemplateCell(ref, value)}</row></sheetData>`);
+  return sheetXml.replace("</sheetData>", `<row r="${rowNumber}">${buildTemplateCell(ref, value)}</row></sheetData>`);
 }
 
 function buildTemplateCell(ref, value, existingAttrs = "") {
@@ -999,6 +1009,11 @@ function buildTemplateCell(ref, value, existingAttrs = "") {
   if (value === "" || value === null || value === undefined) return `<c r="${ref}"${style}/>`;
   if (typeof value === "number" && Number.isFinite(value)) return `<c r="${ref}"${style}><v>${value}</v></c>`;
   return `<c r="${ref}"${style} t="inlineStr"><is><t>${xml(value)}</t></is></c>`;
+}
+
+function cellColumnIndex(ref) {
+  const letters = String(ref || "").match(/[A-Z]+/i)?.[0]?.toUpperCase() || "A";
+  return [...letters].reduce((total, letter) => total * 26 + letter.charCodeAt(0) - 64, 0);
 }
 
 function dateToExcelSerial(date) {

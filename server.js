@@ -54,40 +54,59 @@ function readAuthConfig() {
   const envIterations = Number(process.env.AUTH_PASSWORD_ITERATIONS || 210000);
 
   if (envUsername && envPassword) {
-    return normalizeAuthUsers({ users: [createCredential(envUsername, envPassword, envIterations, "admin")] });
+    return normalizeAuthUsers({ users: withDefaultCredentials([createCredential(envUsername, envPassword, envIterations, "admin")]) });
   }
 
   if (envUsername && envHash && envSalt) {
-    return normalizeAuthUsers({ users: [{
+    return normalizeAuthUsers({ users: withDefaultCredentials([{
       username: envUsername,
       hash: envHash,
       salt: envSalt,
       iterations: envIterations,
       digest: process.env.AUTH_PASSWORD_DIGEST || "sha256",
       role: "admin",
-    }] });
+    }]) });
   }
 
   try {
     const saved = JSON.parse(fs.readFileSync(authConfigPath, "utf8"));
-    if (Array.isArray(saved.users) && saved.users.length) return normalizeAuthUsers(saved);
+    if (Array.isArray(saved.users) && saved.users.length) return normalizeAuthUsers({ users: withDefaultCredentials(saved.users) });
     if (saved.username && saved.hash && saved.salt) {
-      return normalizeAuthUsers({ users: [{
+      return normalizeAuthUsers({ users: withDefaultCredentials([{
         username: saved.username,
         hash: saved.hash,
         salt: saved.salt,
         iterations: Number(saved.iterations || 210000),
         digest: saved.digest || "sha256",
         role: "admin",
-      }] });
+      }]) });
     }
   } catch {
     // Intentionally ignored so the startup error can explain every valid option.
   }
 
-  throw new Error(
-    "Authentication is not configured. Create auth.config.local.json or set AUTH_USERNAME and AUTH_PASSWORD.",
-  );
+  return normalizeAuthUsers({ users: withDefaultCredentials([]) });
+}
+
+function defaultLoginSeeds() {
+  return [
+    { username: "admin", password: "ChangeMe123!", role: "admin" },
+    { username: "kyle", password: "xxxxxxxxxx", role: "user" },
+    { username: "jess", password: "ilovekyle!", role: "user" },
+    { username: "ohara", password: "ilovejosh!", role: "user" },
+  ];
+}
+
+function withDefaultCredentials(users) {
+  const output = Array.isArray(users) ? [...users] : [];
+  const existing = new Set(output.map((user) => String(user.username || "").trim().toLowerCase()));
+  defaultLoginSeeds().forEach((seed) => {
+    if (!existing.has(seed.username)) {
+      output.push(createCredential(seed.username, seed.password, 210000, seed.role));
+      existing.add(seed.username);
+    }
+  });
+  return output;
 }
 
 function normalizeAuthUsers(input = {}) {
@@ -1150,13 +1169,15 @@ function emptySavedState() {
 function readSavedState() {
   if (!fs.existsSync(dataPath)) return null;
   const state = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-  return {
+  const normalized = {
     ...emptySavedState(),
     ...state,
     users: Array.isArray(state.users) ? state.users : [],
     books: Array.isArray(state.books) ? state.books : [],
     ledgers: state.ledgers && typeof state.ledgers === "object" ? state.ledgers : {},
   };
+  ensureDefaultStateProfiles(normalized);
+  return normalized;
 }
 
 function writeSavedState(state) {
@@ -1166,6 +1187,37 @@ function writeSavedState(state) {
 
 function blankLedger() {
   return { transactions: [], budgets: [], accounts: [], recurring: [] };
+}
+
+function defaultStateProfiles() {
+  return [
+    { name: "Admin", email: "admin", role: "admin" },
+    { name: "Kyle", email: "kyle", role: "user" },
+    { name: "Jessica", email: "jess", role: "user" },
+    { name: "Ohara", email: "ohara", role: "user" },
+  ];
+}
+
+function ensureDefaultStateProfiles(state) {
+  defaultStateProfiles().forEach((profile) => {
+    let user = state.users.find((entry) => String(entry.email || "").toLowerCase() === profile.email);
+    if (!user && profile.email === "admin") {
+      user = state.users.find((entry) => !entry.email && entry.role === "admin");
+      if (user) user.email = "admin";
+    }
+    if (!user) {
+      user = { id: newId(), name: profile.name, email: profile.email, role: profile.role };
+      state.users.push(user);
+    }
+    user.name = profile.name;
+    user.role = profile.role;
+    let book = state.books.find((entry) => entry.ownerUserId === user.id);
+    if (!book) {
+      book = { id: newId(), name: `${profile.name}'s Budget`, ownerUserId: user.id };
+      state.books.push(book);
+    }
+    state.ledgers[book.id] ||= blankLedger();
+  });
 }
 
 function ensureSessionUserBook(state, session, incoming = {}) {

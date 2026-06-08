@@ -117,16 +117,25 @@ function bind() {
 }
 
 function base() {
-  const uid = id(), bid = id();
+  const profiles = defaultUserProfiles().map((profile) => ({ ...profile, id: id(), bookId: id() }));
   return {
     version: 4, theme: "classic", currentMonth: thisMonth, periodMode: "month",
-    activeUserId: uid, activeBookId: bid, activeRegisterAccountId: "", registerStartDate: monthStart(thisMonth), registerEndDate: monthEnd(thisMonth),
+    activeUserId: profiles[0].id, activeBookId: profiles[0].bookId, activeRegisterAccountId: "", registerStartDate: monthStart(thisMonth), registerEndDate: monthEnd(thisMonth),
     budgetSort: "warnings",
     transactionStartDate: monthStart(thisMonth), transactionEndDate: monthEnd(thisMonth),
-    users: [{ id: uid, name: "Personal", email: "", role: "admin" }],
-    books: [{ id: bid, name: "Household Budget", ownerUserId: uid }],
-    ledgers: { [bid]: ledger({ transactions: [], accounts: [] }) }
+    users: profiles.map((profile) => ({ id: profile.id, name: profile.name, email: profile.email, role: profile.role })),
+    books: profiles.map((profile) => ({ id: profile.bookId, name: `${profile.name}'s Budget`, ownerUserId: profile.id })),
+    ledgers: Object.fromEntries(profiles.map((profile) => [profile.bookId, ledger({ transactions: [], accounts: [] })]))
   };
+}
+
+function defaultUserProfiles() {
+  return [
+    { name: "Admin", email: "admin", role: "admin" },
+    { name: "Kyle", email: "kyle", role: "user" },
+    { name: "Jessica", email: "jess", role: "user" },
+    { name: "Ohara", email: "ohara", role: "user" },
+  ];
 }
 
 function load() {
@@ -146,6 +155,7 @@ function normalize(input = {}) {
   s.books = Array.isArray(s.books) && s.books.length ? s.books.map((x) => book(x, s.users[0].id)) : b.books;
   s.ledgers = s.ledgers && typeof s.ledgers === "object" ? s.ledgers : b.ledgers;
   s.books.forEach((bk) => s.ledgers[bk.id] = ledger(s.ledgers[bk.id] || {}));
+  if (shouldSeedDefaultProfiles(input)) ensureDefaultProfiles(s);
   if (!s.users.some((u) => u.id === s.activeUserId)) s.activeUserId = s.users[0].id;
   if (!s.books.some((bk) => bk.id === s.activeBookId)) s.activeBookId = s.books[0].id;
   s.activeRegisterAccountId ||= "";
@@ -155,6 +165,34 @@ function normalize(input = {}) {
   s.transactionStartDate = /^\d{4}-\d{2}-\d{2}$/.test(s.transactionStartDate || "") ? s.transactionStartDate : monthStart(s.currentMonth || thisMonth);
   s.transactionEndDate = /^\d{4}-\d{2}-\d{2}$/.test(s.transactionEndDate || "") ? s.transactionEndDate : monthEnd(s.currentMonth || thisMonth);
   return s;
+}
+
+function shouldSeedDefaultProfiles(input = {}) {
+  if (currentLogin.role === "admin") return true;
+  const users = Array.isArray(input.users) ? input.users : [];
+  return !users.length || users.some((entry) => entry.role === "admin");
+}
+
+function ensureDefaultProfiles(s) {
+  defaultUserProfiles().forEach((profile) => {
+    let u = s.users.find((entry) => entry.email.toLowerCase() === profile.email);
+    if (!u && profile.email === "admin") {
+      u = s.users.find((entry) => !entry.email && entry.role === "admin");
+      if (u) u.email = "admin";
+    }
+    if (!u) {
+      u = user(profile);
+      s.users.push(u);
+    }
+    u.name = profile.name;
+    u.role = profile.role;
+    let b = s.books.find((entry) => entry.ownerUserId === u.id);
+    if (!b) {
+      b = book({ name: `${profile.name}'s Budget`, ownerUserId: u.id }, u.id);
+      s.books.push(b);
+    }
+    s.ledgers[b.id] = ledger(s.ledgers[b.id] || { transactions: [], accounts: [] });
+  });
 }
 
 async function loadSession() {

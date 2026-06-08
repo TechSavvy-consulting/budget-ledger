@@ -27,8 +27,7 @@ const el = {};
   "registerStartDate","registerEndDate","registerThisMonthBtn","statementDate","statementBalance","reconcileStatus","reconcileClearedBalance",
   "reconcileOutstanding","reconcileHelp","userForm","userId","userName","userEmail","userRole","userPassword","userPasswordConfirm","userSubmitLabel","resetUserForm","userCount",
   "userList","bookForm","bookId","bookName","bookSubmitLabel","resetBookForm","bookCount","bookList",
-  "passwordForm","currentPassword","newPassword","newPasswordConfirm","passwordSubmitLabel",
-  "themeSelect","exportCsvBtn","exportJsonBtn","importJsonBtn","importJsonFile","importCsvBtn","importCsvFile","exportWorkbookBtn",
+  "themeSelect","exportCsvBtn","settingsExportCsvBtn","csvTemplateBtn","importCsvBtn","importCsvFile","importSpreadsheetBtn","importSpreadsheetFile","exportWorkbookBtn",
   "backupZipBtn","addDemoBtn","deleteDemoBtn","recurringForm","recurringId","recurringName","recurringType","recurringAccount","recurringToAccount",
   "recurringCategory","recurringAmount","recurringCadence","recurringNextDate","recurringSubmitLabel","resetRecurringForm","postDueRecurringBtn","recurringDialog","recurringDialogTitle","closeRecurringDialog",
   "recurringList","transactionDialog","transactionForm","transactionDialogTitle","closeTransactionDialog","transactionId","txnDate","txnType",
@@ -95,14 +94,14 @@ function bind() {
   el.resetUserForm.onclick = resetUser;
   el.bookForm.onsubmit = saveBook;
   el.resetBookForm.onclick = resetBook;
-  el.passwordForm.onsubmit = changeOwnPassword;
   el.themeSelect.onchange = () => { record(); state.theme = el.themeSelect.value; document.body.dataset.theme = state.theme; save(); if (syncReady) syncServer(); };
   el.exportCsvBtn.onclick = exportCsv;
-  el.exportJsonBtn.onclick = exportJson;
-  el.importJsonBtn.onclick = () => el.importJsonFile.click();
-  el.importJsonFile.onchange = importJson;
+  el.settingsExportCsvBtn.onclick = exportCsv;
+  el.csvTemplateBtn.onclick = downloadCsvTemplate;
   el.importCsvBtn.onclick = () => el.importCsvFile.click();
   el.importCsvFile.onchange = importCsv;
+  el.importSpreadsheetBtn.onclick = () => el.importSpreadsheetFile.click();
+  el.importSpreadsheetFile.onchange = importSpreadsheet;
   el.exportWorkbookBtn.onclick = () => postDownload("/api/export-workbook", `budget-ledger-${stamp()}.xlsx`);
   el.backupZipBtn.onclick = () => postDownload("/api/backup-zip", `budget-ledger-backup-${stamp()}.zip`);
   el.addDemoBtn.onclick = addDemo;
@@ -126,7 +125,7 @@ function base() {
     transactionStartDate: monthStart(thisMonth), transactionEndDate: monthEnd(thisMonth),
     users: [{ id: uid, name: "Personal", email: "", role: "admin" }],
     books: [{ id: bid, name: "Household Budget", ownerUserId: uid }],
-    ledgers: { [bid]: ledger({ transactions: starters(), accounts: accounts() }) }
+    ledgers: { [bid]: ledger({ transactions: [], accounts: [] }) }
   };
 }
 
@@ -186,7 +185,7 @@ function ensureLoginIdentity() {
   if (!b) {
     b = book({ name: `${u.name}'s Budget`, ownerUserId: u.id }, u.id);
     state.books.push(b);
-    state.ledgers[b.id] = ledger();
+    state.ledgers[b.id] = ledger({ transactions: [], accounts: [] });
   }
   state.activeUserId = u.id;
   state.activeBookId = b.id;
@@ -196,7 +195,7 @@ function ledger(x = {}) {
   return {
     transactions: Array.isArray(x.transactions) ? x.transactions.map(txn) : [],
     budgets: Array.isArray(x.budgets) ? x.budgets.map(budget) : budgets(),
-    accounts: Array.isArray(x.accounts) ? x.accounts.map(account) : accounts(),
+    accounts: Array.isArray(x.accounts) ? x.accounts.map(account) : [],
     recurring: Array.isArray(x.recurring) ? x.recurring.map(recurring) : []
   };
 }
@@ -223,7 +222,7 @@ function ensureUserBook(u) {
   if (!b) {
     b = book({ name: `${u.name}'s Budget`, ownerUserId: u.id }, u.id);
     state.books.push(b);
-    state.ledgers[b.id] = ledger();
+    state.ledgers[b.id] = ledger({ transactions: [], accounts: [] });
   }
   return b;
 }
@@ -468,7 +467,7 @@ function deleteAccount(id) {
   const txns = L().transactions.filter((x) => x.accountId === id || x.toAccountId === id);
   const rec = L().recurring.filter((x) => x.accountId === id || x.toAccountId === id);
   const refs = txns.length + rec.length;
-  if (refs && !confirm(`"${a.name}" is used by ${refs} transaction or recurring row(s). Delete the account AND all those dependent rows? Export a JSON backup first if you may need this history.`)) return;
+  if (refs && !confirm(`"${a.name}" is used by ${refs} transaction or recurring row(s). Delete the account AND all those dependent rows? Use Backup App Folder first if you may need this history.`)) return;
   if (!refs && !confirm("Delete account?")) return;
   record();
   L().accounts = L().accounts.filter((x) => x.id !== id);
@@ -642,7 +641,7 @@ function seedLedgerDemo(bookLedger) {
   );
 }
 function deleteDemo() {
-  if (!confirm("Delete demo data only? Personal users, books, accounts, budgets, transactions, and recurring items will be kept.")) return;
+  if (!confirm("Delete demo and starter data? Personal users, books, and real ledger entries will be kept.")) return;
   record();
   state.users = state.users.filter((x) => !x.demo);
   state.books = state.books.filter((x) => !x.demo);
@@ -653,11 +652,24 @@ function deleteDemo() {
     }
     const l = state.ledgers[bookId] = ledger(state.ledgers[bookId] || {});
     ["transactions","accounts","budgets","recurring"].forEach((key) => l[key] = l[key].filter((x) => !x.demo));
+    removeStarterSeed(l);
   });
   ensureAccess();
   save();
   render();
   note("Demo data removed.");
+}
+function removeStarterSeed(bookLedger) {
+  const starterDescriptions = new Set(["Example paycheck", "Example grocery run"]);
+  const starterAccountNames = new Set(["checking", "savings", "credit card"]);
+  const hadStarterRows = bookLedger.transactions.some((t) => starterDescriptions.has(t.description));
+  bookLedger.transactions = bookLedger.transactions.filter((t) => !starterDescriptions.has(t.description));
+  if (!hadStarterRows) return;
+  const used = new Set(bookLedger.transactions.flatMap((t) => [t.accountId, t.toAccountId]).filter(Boolean));
+  bookLedger.accounts = bookLedger.accounts.filter((a) => {
+    const starterAccount = starterAccountNames.has(a.name.toLowerCase()) && !a.demo && (+a.openingBalance || 0) === 0 && !used.has(a.id);
+    return !starterAccount;
+  });
 }
 
 function balance(a) { return (+a.openingBalance || 0) + L().transactions.reduce((n, t) => n + delta(t, a.id), 0); }
@@ -747,7 +759,25 @@ function exportState() {
   };
 }
 function exportJson() { download(new Blob([JSON.stringify(exportState(), null, 2)], { type: "application/json" }), `budget-ledger-backup-${stamp()}.json`); }
-function exportCsv() { const rows = [["book","date","type","payee","description","account","toAccount","category","amount","cleared","reconciled","notes"], ...L().transactions.map((t) => [currentBook().name,t.date,t.type,t.payee,t.description,L().accounts.find((a) => a.id === t.accountId)?.name || "",L().accounts.find((a) => a.id === t.toAccountId)?.name || "",t.category,t.amount,t.cleared,t.reconciled,t.notes])]; download(new Blob([rows.map((r) => r.map(csv).join(",")).join("\n")], { type: "text/csv" }), `budget-ledger-${stamp()}.csv`); }
+function csvHeaders() { return ["section","date","type","payee","description","account","toAccount","category","amount","cleared","reconciled","notes","name","accountType","openingBalance","monthlyLimit","period","group","cadence","nextDate"]; }
+function csvRows(includeExamples = false) {
+  const accountName = (id) => L().accounts.find((a) => a.id === id)?.name || "";
+  const rows = [csvHeaders()];
+  if (includeExamples) {
+    rows.push(["account","","","","","","","","","","","","Checking","asset","1000","","","","",""]);
+    rows.push(["budget","","","","","","","Grocery","","","","","","","","650","month","expense","",""]);
+    rows.push(["recurring","","expense","","Rent","Checking","","Housing","1625","","","","Rent","","","","","","monthly","2026-07-01"]);
+    rows.push(["transaction","2026-07-01","expense","Grocery Store","Weekly groceries","Checking","","Grocery","125.50","yes","no","Example row","","","","","","",""]);
+    return rows;
+  }
+  L().accounts.forEach((a) => rows.push(["account","","","","","","","","","","","",a.name,a.type,a.openingBalance,"","","","",""]));
+  L().budgets.forEach((b) => rows.push(["budget","","","","","","",b.category,"","","","","","","",b.monthlyLimit,b.period,b.group,"",""]));
+  L().recurring.forEach((r) => rows.push(["recurring","",r.type,"",r.name,accountName(r.accountId),accountName(r.toAccountId),r.category,r.amount,"","","",r.name,"","","","","",r.cadence,r.nextDate]));
+  L().transactions.forEach((t) => rows.push(["transaction",t.date,t.type,t.payee,t.description,accountName(t.accountId),accountName(t.toAccountId),t.category,t.amount,t.cleared,t.reconciled,t.notes,"","","","","","","",""]));
+  return rows;
+}
+function exportCsv() { download(new Blob([csvRows().map((r) => r.map(csv).join(",")).join("\n")], { type: "text/csv" }), `budget-ledger-${stamp()}.csv`); }
+function downloadCsvTemplate() { download(new Blob([csvRows(true).map((r) => r.map(csv).join(",")).join("\n")], { type: "text/csv" }), "budget-ledger-import-template.csv"); }
 async function importJson(e) {
   const f = e.target.files?.[0];
   e.target.value = "";
@@ -770,30 +800,89 @@ async function importCsv(e) {
   if (!f) return;
   const rows = parseCsv(await f.text());
   if (rows.length < 2) return;
-  const head = rows[0].map((x) => x.toLowerCase()), get = (r, k) => r[head.indexOf(k)] || "";
-  if (!confirm("Import these CSV transactions into the current book? Export JSON first if you may need to undo.")) return;
+  const head = rows[0].map((x) => x.trim().toLowerCase());
+  const get = (r, k) => {
+    const i = head.indexOf(k.toLowerCase());
+    return i >= 0 ? r[i] || "" : "";
+  };
+  if (!confirm("Import this CSV into the current book? It can add accounts, budgets, recurring items, and transactions.")) return;
   record();
+  const counts = { accounts: 0, budgets: 0, recurring: 0, transactions: 0 };
   rows.slice(1).forEach((r) => {
-    const accountId = accountIdFromName(get(r, "account"));
-    const toAccountId = accountIdFromName(get(r, "toaccount"));
-    const row = txn({
-      date: get(r,"date"),
-      type: get(r,"type"),
-      payee: get(r,"payee"),
-      description: get(r,"description"),
-      accountId,
-      toAccountId,
-      category: get(r,"category"),
-      amount: get(r,"amount"),
-      cleared: bool(get(r,"cleared")),
-      reconciled: bool(get(r,"reconciled")),
-      notes: get(r,"notes"),
-    });
-    if (row.accountId && row.amount) L().transactions.push(row);
+    const section = String(get(r, "section") || (get(r, "date") && get(r, "amount") ? "transaction" : "")).trim().toLowerCase();
+    if (section === "account") {
+      const name = get(r, "name") || get(r, "account");
+      if (!name) return;
+      let existing = L().accounts.find((a) => a.name.toLowerCase() === name.toLowerCase());
+      const next = account({ ...existing, name, type: get(r, "accounttype") || get(r, "type"), openingBalance: get(r, "openingbalance") || get(r, "amount") });
+      existing ? Object.assign(existing, next, { id: existing.id }) : L().accounts.push(next);
+      counts.accounts++;
+      return;
+    }
+    if (section === "budget") {
+      const category = get(r, "category") || get(r, "name");
+      if (!category) return;
+      let existing = L().budgets.find((b) => b.category.toLowerCase() === category.toLowerCase());
+      const next = budget({ ...existing, category, monthlyLimit: get(r, "monthlylimit") || get(r, "amount"), period: get(r, "period"), group: get(r, "group") });
+      existing ? Object.assign(existing, next, { id: existing.id }) : L().budgets.push(next);
+      counts.budgets++;
+      return;
+    }
+    if (section === "recurring") {
+      const accountId = accountIdFromName(get(r, "account"));
+      const row = recurring({
+        name: get(r, "name") || get(r, "description"),
+        type: get(r, "type"),
+        accountId,
+        toAccountId: accountIdFromName(get(r, "toaccount")),
+        category: get(r, "category"),
+        amount: get(r, "amount"),
+        cadence: get(r, "cadence"),
+        nextDate: get(r, "nextdate") || get(r, "date"),
+      });
+      if (row.name && row.accountId && row.amount) { L().recurring.push(row); counts.recurring++; }
+      return;
+    }
+    if (section === "transaction" || !section) {
+      const accountId = accountIdFromName(get(r, "account"));
+      const row = txn({
+        date: get(r,"date"),
+        type: get(r,"type"),
+        payee: get(r,"payee"),
+        description: get(r,"description"),
+        accountId,
+        toAccountId: accountIdFromName(get(r,"toaccount")),
+        category: get(r,"category"),
+        amount: get(r,"amount"),
+        cleared: bool(get(r,"cleared")),
+        reconciled: bool(get(r,"reconciled")),
+        notes: get(r,"notes"),
+      });
+      if (row.accountId && row.amount) { L().transactions.push(row); counts.transactions++; }
+    }
   });
   save();
   render();
-  note("CSV import complete.");
+  note(`CSV import complete: ${counts.accounts} accounts, ${counts.budgets} budgets, ${counts.recurring} recurring, ${counts.transactions} transactions.`);
+}
+async function importSpreadsheet(e) {
+  const f = e.target.files?.[0];
+  e.target.value = "";
+  if (!f) return;
+  if (!confirm("Import matching data from this spreadsheet into the current book?")) return;
+  try {
+    const res = await fetch("/api/import-spreadsheet", { method: "POST", headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }, body: await f.arrayBuffer() });
+    const body = await res.json();
+    if (!res.ok || !body.ledger) throw new Error(body.message || "Spreadsheet import failed.");
+    record();
+    mergeLedger(body.ledger);
+    save();
+    render();
+    const c = body.counts || {};
+    note(`Spreadsheet import complete: ${c.accounts || 0} accounts, ${c.budgets || 0} budgets, ${c.transactions || 0} transactions.`);
+  } catch (error) {
+    note(error.message || "Spreadsheet import failed.");
+  }
 }
 async function postDownload(url, name) { try { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(exportState()) }); if (!r.ok) throw 0; download(await r.blob(), name); } catch { note("Export failed."); } }
 
@@ -832,6 +921,27 @@ function accountIdFromName(name) {
     L().accounts.push(a);
   }
   return a.id;
+}
+function mergeLedger(imported) {
+  const next = ledger(imported);
+  const byAccount = new Map(L().accounts.map((a) => [a.name.toLowerCase(), a]));
+  next.accounts.forEach((a) => {
+    const existing = byAccount.get(a.name.toLowerCase());
+    if (existing) Object.assign(existing, { ...a, id: existing.id });
+    else L().accounts.push(a);
+  });
+  const byBudget = new Map(L().budgets.map((b) => [b.category.toLowerCase(), b]));
+  next.budgets.forEach((b) => {
+    const existing = byBudget.get(b.category.toLowerCase());
+    if (existing) Object.assign(existing, { ...b, id: existing.id });
+    else L().budgets.push(b);
+  });
+  L().recurring.push(...next.recurring);
+  L().transactions.push(...next.transactions.map((t) => {
+    const importedAccount = next.accounts.find((a) => a.id === t.accountId);
+    const importedTo = next.accounts.find((a) => a.id === t.toAccountId);
+    return txn({ ...t, accountId: importedAccount ? accountIdFromName(importedAccount.name) : t.accountId, toAccountId: importedTo ? accountIdFromName(importedTo.name) : t.toAccountId });
+  }));
 }
 function csv(v) { return `"${String(v ?? "").replaceAll('"','""')}"`; }
 function parseCsv(text) { const rows = []; let row = [], cell = "", q = false; for (let i = 0; i < text.length; i++) { const c = text[i], n = text[i + 1]; if (q && c === '"' && n === '"') { cell += '"'; i++; } else if (c === '"') q = !q; else if (!q && c === ",") { row.push(cell); cell = ""; } else if (!q && (c === "\n" || c === "\r")) { if (c === "\r" && n === "\n") i++; row.push(cell); if (row.some(Boolean)) rows.push(row); row = []; cell = ""; } else cell += c; } row.push(cell); if (row.some(Boolean)) rows.push(row); return rows; }

@@ -3,12 +3,14 @@ const fs = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
+const zlib = require("node:zlib");
 const { exec } = require("node:child_process");
 
 const root = __dirname;
 const configPath = path.join(root, "budget-app.config.json");
 const authConfigPath = path.join(root, "auth.config.local.json");
 const dataPath = process.env.DATA_PATH || path.join(root, "budget-ledger-data.json");
+const worksheetTemplatePath = path.join(root, "templates", "budget-worksheet-template.xlsx");
 const defaultConfig = {
   port: 4173,
   host: "127.0.0.1",
@@ -286,6 +288,24 @@ function readExportBody(req) {
   return readLimitedBody(req, maxExportBody);
 }
 
+function readBinaryBody(req, limit = maxExportBody) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let length = 0;
+    req.on("data", (chunk) => {
+      length += chunk.length;
+      if (length > limit) {
+        reject(new Error("Request body is too large."));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 function readLimitedBody(req, limit) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -492,6 +512,7 @@ async function handleBackupZip(req, res) {
       "README.md",
       "assets/jess-simple-budget-ledger-logo.png",
       "assets/mobile-login-qr.svg",
+      "templates/budget-worksheet-template.xlsx",
     ]) {
       const source = path.join(root, name);
       if (fs.existsSync(source)) files[name] = fs.readFileSync(source);
@@ -506,7 +527,24 @@ async function handleBackupZip(req, res) {
   }
 }
 
+async function handleSpreadsheetImport(req, res) {
+  try {
+    const buffer = await readBinaryBody(req);
+    const result = parseBudgetWorksheet(buffer);
+    sendJson(req, res, 200, { ok: true, ...result });
+  } catch (error) {
+    sendJson(req, res, 400, { ok: false, message: error.message || "Spreadsheet import failed." });
+  }
+}
+
 function buildWorkbook(state) {
+  if (!fs.existsSync(worksheetTemplatePath)) return buildGenericWorkbook(state);
+  const files = parseZip(fs.readFileSync(worksheetTemplatePath));
+  const filled = fillWorksheetTemplate(files, state);
+  return createZip(filled);
+}
+
+function buildGenericWorkbook(state) {
   const sheets = workbookSheets(state);
   const files = {
     "[Content_Types].xml": contentTypesXml(sheets),
@@ -568,6 +606,445 @@ function accountDelta(t, accountId, accounts) {
   if (t.type === "transfer" && t.accountId === accountId) return account.type === "liability" ? amount : -amount;
   if (t.type === "transfer" && t.toAccountId === accountId) return account.type === "liability" ? -amount : amount;
   return 0;
+}
+
+function fillWorksheetTemplate(sourceFiles, state = {}) {
+  const files = Object.fromEntries(Object.entries(sourceFiles).map(([name, data]) => [name, Buffer.from(data)]));
+  const { book, ledger } = primaryLedger(state);
+  const accounts = Array.isArray(ledger.accounts) ? ledger.accounts : [];
+  const transactions = Array.isArray(ledger.transactions) ? ledger.transactions : [];
+  const sheets = templateSheets(files);
+  const monthSheets = sheets.filter((sheet) => !/^(aum|to copy worksheets|sheet1)$/i.test(sheet.name)).slice(0, 3);
+  const months = transactionMonths(transactions).slice(0, monthSheets.length || 1);
+
+  if (files["xl/workbook.xml"] && monthSheets.length) {
+    let workbook = files["xl/workbook.xml"].toString("utf8");
+    monthSheets.forEach((sheet, index) => {
+      const name = monthSheetName(months[index] || months[0]);
+      workbook = renameSheet(workbook, sheet.name, name);
+      sheet.name = name;
+    });
+    files["xl/workbook.xml"] = Buffer.from(workbook, "utf8");
+  }
+
+  monthSheets.forEach((sheet, index) => {
+    const month = months[index] || months[0];
+    const monthTransactions = transactions.filter((t) => monthKey(t.date) === month);
+    const xmlText = fillMonthlySheet(files[sheet.path]?.toString("utf8") || "", monthTransactions, accounts);
+    files[sheet.path] = Buffer.from(xmlText, "utf8");
+  });
+
+  const aum = sheets.find((sheet) => /^aum$/i.test(sheet.name));
+  if (aum && files[aum.path]) {
+    files[aum.path] = Buffer.from(fillAumSheet(files[aum.path].toString("utf8"), book, ledger), "utf8");
+  }
+
+  delete files["xl/calcChain.xml"];
+  if (files["[Content_Types].xml"]) {
+    files["[Content_Types].xml"] = Buffer.from(files["[Content_Types].xml"].toString("utf8").replace(/<Override\b[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/g, ""), "utf8");
+  }
+  if (files["xl/_rels/workbook.xml.rels"]) {
+    files["xl/_rels/workbook.xml.rels"] = Buffer.from(files["xl/_rels/workbook.xml.rels"].toString("utf8").replace(/<Relationship\b[^>]*Target="calcChain\.xml"[^>]*\/>/g, ""), "utf8");
+  }
+  return files;
+}
+
+function primaryLedger(state = {}) {
+  const ledgers = state.ledgers && typeof state.ledgers === "object"
+    ? state.ledgers
+    : state.ledger
+      ? { [state.book?.id || "book"]: state.ledger }
+      : {};
+  const books = Array.isArray(state.books) && state.books.length
+    ? state.books
+    : [{ id: state.book?.id || state.activeBookId || Object.keys(ledgers)[0] || "book", name: state.book?.name || "Household Budget" }];
+  const book = books.find((entry) => entry.id === state.activeBookId) || books[0];
+  return { book, ledger: ledgers[book.id] || ledgers[Object.keys(ledgers)[0]] || {} };
+}
+
+function transactionMonths(transactions) {
+  const months = [...new Set(transactions.map((t) => monthKey(t.date)).filter(Boolean))].sort();
+  return months.length ? months : [new Date().toISOString().slice(0, 7)];
+}
+
+function monthKey(date) {
+  return /^\d{4}-\d{2}/.test(String(date || "")) ? String(date).slice(0, 7) : "";
+}
+
+function monthSheetName(month) {
+  const [year, rawMonth] = String(month || new Date().toISOString().slice(0, 7)).split("-").map(Number);
+  const names = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return `${names[(rawMonth || 1) - 1]} ${year || new Date().getFullYear()}`;
+}
+
+function renameSheet(workbookXmlText, oldName, newName) {
+  return workbookXmlText.replace(new RegExp(`(<sheet\\b[^>]*name=")${escapeRegExp(oldName)}("[^>]*>)`), `$1${xml(newName.slice(0, 31))}$2`);
+}
+
+function fillMonthlySheet(sheetXml, transactions, accounts) {
+  let xmlText = sheetXml;
+  for (let row = 4; row <= 49; row++) {
+    for (const col of ["A","B","C","D","E","G","H","I","J","K"]) {
+      xmlText = setSheetCell(xmlText, `${col}${row}`, "");
+    }
+  }
+
+  const slots = [];
+  for (let row = 4; row <= 49; row++) slots.push({ row, side: "left" });
+  for (let row = 4; row <= 49; row++) slots.push({ row, side: "right" });
+
+  transactions.slice(0, slots.length).forEach((t, index) => {
+    const slot = slots[index];
+    const cols = slot.side === "left"
+      ? ["A","B","C","D","E"]
+      : ["G","H","I","J","K"];
+    const out = t.type === "income" ? "" : Number(t.amount || 0);
+    const input = t.type === "income" ? Number(t.amount || 0) : "";
+    const account = accounts.find((a) => a.id === t.accountId)?.name || "";
+    const description = [t.payee || t.description || t.category || "Transaction", account].filter(Boolean).join(" - ");
+    xmlText = setSheetCell(xmlText, `${cols[0]}${slot.row}`, dateToExcelSerial(t.date));
+    xmlText = setSheetCell(xmlText, `${cols[1]}${slot.row}`, description);
+    xmlText = setSheetCell(xmlText, `${cols[2]}${slot.row}`, t.cleared || t.reconciled ? "Y" : "");
+    xmlText = setSheetCell(xmlText, `${cols[3]}${slot.row}`, out);
+    xmlText = setSheetCell(xmlText, `${cols[4]}${slot.row}`, input);
+  });
+  return xmlText;
+}
+
+function fillAumSheet(sheetXml, book, ledger) {
+  let xmlText = sheetXml;
+  const accounts = Array.isArray(ledger.accounts) ? ledger.accounts : [];
+  const transactions = Array.isArray(ledger.transactions) ? ledger.transactions : [];
+  const assets = accounts.filter((a) => a.type !== "liability");
+  const liabilities = accounts.filter((a) => a.type === "liability");
+
+  xmlText = setSheetCell(xmlText, "A1", book?.name || "Household Budget");
+  for (let row = 7; row <= 30; row++) {
+    xmlText = setSheetCell(xmlText, `H${row}`, "");
+    xmlText = setSheetCell(xmlText, `J${row}`, "");
+  }
+  for (let row = 33; row <= 45; row++) {
+    xmlText = setSheetCell(xmlText, `H${row}`, "");
+    xmlText = setSheetCell(xmlText, `I${row}`, "");
+  }
+  assets.slice(0, 24).forEach((account, index) => {
+    const row = 7 + index;
+    xmlText = setSheetCell(xmlText, `H${row}`, account.name);
+    xmlText = setSheetCell(xmlText, `J${row}`, accountBalance(account, transactions, accounts));
+  });
+  liabilities.slice(0, 13).forEach((account, index) => {
+    const row = 33 + index;
+    xmlText = setSheetCell(xmlText, `H${row}`, account.name);
+    xmlText = setSheetCell(xmlText, `I${row}`, Math.abs(accountBalance(account, transactions, accounts)));
+  });
+  return xmlText;
+}
+
+function parseBudgetWorksheet(buffer) {
+  const files = parseZip(buffer);
+  const strings = sharedStrings(files);
+  const sheets = templateSheets(files);
+  const ledger = { transactions: [], accounts: [], budgets: [], recurring: [] };
+  const categories = new Set();
+
+  const aum = sheets.find((sheet) => /^aum$/i.test(sheet.name));
+  if (aum && files[aum.path]) {
+    importAumAccounts(files[aum.path].toString("utf8"), strings, ledger);
+  }
+
+  let defaultAccount = ledger.accounts.find((a) => a.type !== "liability");
+  if (!defaultAccount) {
+    defaultAccount = importAccount({ name: "Spreadsheet Import", type: "asset", openingBalance: 0 });
+    ledger.accounts.push(defaultAccount);
+  }
+
+  sheets
+    .filter((sheet) => !/^(aum|to copy worksheets|sheet1)$/i.test(sheet.name))
+    .forEach((sheet) => {
+      const cells = sheetCells(files[sheet.path]?.toString("utf8") || "", strings);
+      importMonthlyGrid(cells, sheet.name, ["A","B","C","D","E"], defaultAccount.id, ledger, categories);
+      importMonthlyGrid(cells, sheet.name, ["G","H","I","J","K"], defaultAccount.id, ledger, categories);
+    });
+
+  for (const category of categories) {
+    if (!/^income$/i.test(category) && !ledger.budgets.some((b) => b.category.toLowerCase() === category.toLowerCase())) {
+      ledger.budgets.push(importBudget({ category, monthlyLimit: 0, period: "month", group: "expense" }));
+    }
+  }
+
+  if (!ledger.transactions.length && ledger.accounts.length === 1 && ledger.accounts[0].name === "Spreadsheet Import") {
+    ledger.accounts = [];
+  }
+
+  return {
+    ledger,
+    counts: {
+      accounts: ledger.accounts.length,
+      budgets: ledger.budgets.length,
+      transactions: ledger.transactions.length,
+    },
+  };
+}
+
+function importAumAccounts(sheetXml, strings, ledger) {
+  const cells = sheetCells(sheetXml, strings);
+  const skip = /^(assets|liabilities|total|assets under management|checking accounts|savings accounts|cds|investments|real estate|vehicles|vehicle loan)$/i;
+  for (let row = 7; row <= 45; row++) {
+    const name = cleanText(cellValue(cells, `H${row}`));
+    const assetValue = numberValue(cellValue(cells, `J${row}`));
+    const liabilityValue = numberValue(cellValue(cells, `I${row}`));
+    if (!name || skip.test(name)) continue;
+    if (!assetValue && !liabilityValue) continue;
+    if (/^[A-Z\s]+$/.test(name) && name.length < 20) continue;
+    if (assetValue) ledger.accounts.push(importAccount({ name, type: "asset", openingBalance: assetValue }));
+    else if (liabilityValue) ledger.accounts.push(importAccount({ name, type: "liability", openingBalance: liabilityValue }));
+  }
+}
+
+function importMonthlyGrid(cells, sheetName, cols, accountId, ledger, categories) {
+  let category = "";
+  for (let row = 4; row <= 99; row++) {
+    const first = cellValue(cells, `${cols[0]}${row}`);
+    const description = cleanText(cellValue(cells, `${cols[1]}${row}`));
+    const cleared = cleanText(cellValue(cells, `${cols[2]}${row}`));
+    const out = numberValue(cellValue(cells, `${cols[3]}${row}`));
+    const input = numberValue(cellValue(cells, `${cols[4]}${row}`));
+
+    if (typeof first === "string" && cleanCategory(first)) {
+      category = cleanCategory(first);
+      continue;
+    }
+
+    const date = worksheetDate(first, sheetName);
+    const amount = input || out;
+    if (!date || !amount || !description) continue;
+    if (/^(other|amt budgeted|income|giving|savings|utilities|debt pmt|fuel|grocery|entertainment|health|travel)$/i.test(description)) continue;
+
+    const finalCategory = category || "Imported";
+    categories.add(finalCategory);
+    ledger.transactions.push(importTxn({
+      date,
+      type: input ? "income" : "expense",
+      accountId,
+      category: finalCategory,
+      description: description || finalCategory,
+      amount,
+      cleared: boolText(cleared),
+      reconciled: boolText(cleared),
+    }));
+  }
+}
+
+function importAccount({ name, type, openingBalance }) {
+  return {
+    id: crypto.randomUUID(),
+    name: String(name || "Account"),
+    type: type === "liability" ? "liability" : "asset",
+    value: 0,
+    owed: type === "liability" ? Number(openingBalance || 0) : 0,
+    openingBalance: Number(openingBalance || 0),
+    balance: Number(openingBalance || 0),
+    statementDate: "",
+    statementBalance: 0,
+  };
+}
+
+function importBudget({ category, monthlyLimit, period, group }) {
+  return {
+    id: crypto.randomUUID(),
+    category: String(category || "Other"),
+    monthlyLimit: Number(monthlyLimit || 0),
+    period: ["week","month","year"].includes(period) ? period : "month",
+    group: group || "expense",
+  };
+}
+
+function importTxn(input) {
+  return {
+    id: crypto.randomUUID(),
+    date: input.date,
+    type: input.type,
+    payee: "",
+    accountId: input.accountId,
+    toAccountId: "",
+    category: input.category,
+    description: input.description,
+    amount: Number(input.amount || 0),
+    cleared: !!input.cleared,
+    reconciled: !!input.reconciled,
+    payPeriod: "none",
+    notes: "",
+    splits: [],
+  };
+}
+
+function parseZip(buffer) {
+  let eocd = -1;
+  for (let index = buffer.length - 22; index >= 0; index--) {
+    if (buffer.readUInt32LE(index) === 0x06054b50) {
+      eocd = index;
+      break;
+    }
+  }
+  if (eocd === -1) throw new Error("Invalid workbook file.");
+  const count = buffer.readUInt16LE(eocd + 10);
+  let offset = buffer.readUInt32LE(eocd + 16);
+  const files = {};
+  for (let index = 0; index < count; index++) {
+    if (buffer.readUInt32LE(offset) !== 0x02014b50) throw new Error("Invalid workbook directory.");
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.slice(offset + 46, offset + 46 + nameLength).toString("utf8").replaceAll("\\", "/");
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = buffer.slice(dataStart, dataStart + compressedSize);
+    if (method === 0) files[name] = Buffer.from(compressed);
+    else if (method === 8) files[name] = zlib.inflateRawSync(compressed);
+    else throw new Error("Unsupported workbook compression.");
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return files;
+}
+
+function templateSheets(files) {
+  const workbook = files["xl/workbook.xml"]?.toString("utf8") || "";
+  const rels = files["xl/_rels/workbook.xml.rels"]?.toString("utf8") || "";
+  const targets = {};
+  for (const match of rels.matchAll(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)) {
+    targets[match[1]] = normalizeWorkbookTarget(match[2]);
+  }
+  return [...workbook.matchAll(/<sheet\b[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g)]
+    .map((match) => ({ name: xmlDecode(match[1]), path: targets[match[2]] }))
+    .filter((sheet) => sheet.path && files[sheet.path]);
+}
+
+function normalizeWorkbookTarget(target) {
+  const clean = target.replace(/^\/+/, "");
+  if (clean.startsWith("xl/")) return clean;
+  return `xl/${clean}`;
+}
+
+function sharedStrings(files) {
+  const text = files["xl/sharedStrings.xml"]?.toString("utf8") || "";
+  return [...text.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map((match) =>
+    [...match[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((part) => xmlDecode(part[1])).join(""),
+  );
+}
+
+function sheetCells(sheetXml, strings) {
+  const cells = {};
+  for (const match of sheetXml.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+    const ref = attr(match[1], "r");
+    if (!ref) continue;
+    const type = attr(match[1], "t");
+    const body = match[2];
+    const raw = body.match(/<v>([\s\S]*?)<\/v>/)?.[1] || "";
+    if (type === "s") cells[ref] = strings[Number(raw)] || "";
+    else if (type === "inlineStr") cells[ref] = [...body.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((part) => xmlDecode(part[1])).join("");
+    else if (raw !== "" && !Number.isNaN(Number(raw))) cells[ref] = Number(raw);
+    else if (raw) cells[ref] = xmlDecode(raw);
+  }
+  return cells;
+}
+
+function cellValue(cells, ref) {
+  return cells[ref] ?? "";
+}
+
+function setSheetCell(sheetXml, ref, value) {
+  const cellPattern = /<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/g;
+  let replaced = false;
+  let next = sheetXml.replace(cellPattern, (cell) => {
+    if (attr(cell, "r") !== ref) return cell;
+    replaced = true;
+    const attrs = cell.match(/^<c\b([^>]*)>/)?.[1] || "";
+    return buildTemplateCell(ref, value, attrs);
+  });
+  if (replaced) return next;
+
+  const rowNumber = Number(ref.match(/\d+/)?.[0] || 1);
+  const rowPattern = new RegExp(`(<row\\b(?=[^>]*\\br="${rowNumber}")[^>]*>)([\\s\\S]*?)(</row>)`);
+  if (rowPattern.test(next)) {
+    return next.replace(rowPattern, `$1$2${buildTemplateCell(ref, value)}$3`);
+  }
+  return next.replace("</sheetData>", `<row r="${rowNumber}">${buildTemplateCell(ref, value)}</row></sheetData>`);
+}
+
+function buildTemplateCell(ref, value, existingAttrs = "") {
+  const style = existingAttrs.match(/\ss="[^"]+"/)?.[0] || "";
+  if (value === "" || value === null || value === undefined) return `<c r="${ref}"${style}/>`;
+  if (typeof value === "number" && Number.isFinite(value)) return `<c r="${ref}"${style}><v>${value}</v></c>`;
+  return `<c r="${ref}"${style} t="inlineStr"><is><t>${xml(value)}</t></is></c>`;
+}
+
+function dateToExcelSerial(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return "";
+  const [year, month, day] = String(date).split("-").map(Number);
+  return Math.floor(Date.UTC(year, month - 1, day) / 86400000) + 25569;
+}
+
+function worksheetDate(value, sheetName) {
+  if (typeof value === "number" && value > 20000 && value < 80000) {
+    return new Date((value - 25569) * 86400000).toISOString().slice(0, 10);
+  }
+  const raw = cleanText(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return "";
+}
+
+function monthFromSheetName(name) {
+  const months = { january: "01", february: "02", march: "03", april: "04", may: "05", june: "06", july: "07", august: "08", september: "09", october: "10", november: "11", december: "12" };
+  const match = String(name || "").match(/([A-Za-z]+)\s+(\d{4})/);
+  if (!match) return "";
+  const month = months[match[1].toLowerCase()];
+  return month ? `${match[2]}-${month}` : "";
+}
+
+function cleanCategory(value) {
+  const text = cleanText(value);
+  if (!text || /^(date due|description|cleared|out|in|amt budgeted|total|balance|updated|other|rollover)$/i.test(text)) return "";
+  return titleCase(text);
+}
+
+function cleanText(value) {
+  return String(value ?? "").trim();
+}
+
+function numberValue(value) {
+  const number = Number(String(value ?? "").replace(/[$,]/g, ""));
+  return Number.isFinite(number) ? Math.abs(number) : 0;
+}
+
+function boolText(value) {
+  return /^(y|yes|true|1|x|cleared|reconciled)$/i.test(cleanText(value));
+}
+
+function titleCase(value) {
+  return String(value || "").toLowerCase().split(/\s+/).filter(Boolean).map((part) => part[0].toUpperCase() + part.slice(1)).join(" ");
+}
+
+function attr(attrs, name) {
+  return attrs.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1] || "";
+}
+
+function xmlDecode(value) {
+  return String(value ?? "")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function contentTypesXml(sheets) {
@@ -992,6 +1469,11 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === "/api/export-workbook" && req.method === "POST") {
     await handleWorkbookExport(req, res);
+    return;
+  }
+
+  if (pathname === "/api/import-spreadsheet" && req.method === "POST") {
+    await handleSpreadsheetImport(req, res);
     return;
   }
 

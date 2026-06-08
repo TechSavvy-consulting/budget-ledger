@@ -551,44 +551,20 @@
 
             <section class="tool-panel">
               <div class="section-heading">
-                <h2>Security</h2>
-              </div>
-              <form id="passwordForm" class="form-grid">
-                <label>
-                  <span>Current Password</span>
-                  <input id="currentPassword" type="password" minlength="8" maxlength="120" autocomplete="current-password" required />
-                </label>
-                <label>
-                  <span>New Password</span>
-                  <input id="newPassword" type="password" minlength="8" maxlength="120" autocomplete="new-password" required />
-                </label>
-                <label>
-                  <span>Confirm New Password</span>
-                  <input id="newPasswordConfirm" type="password" minlength="8" maxlength="120" autocomplete="new-password" required />
-                </label>
-                <div class="form-actions wide">
-                  <button class="primary-button" type="submit">
-                    <span id="passwordSubmitLabel">Change Password</span>
-                  </button>
-                </div>
-              </form>
-            </section>
-
-            <section class="tool-panel">
-              <div class="section-heading">
                 <h2>Import, Export & Demo Tools</h2>
               </div>
               <div class="button-grid">
-                <button id="exportJsonBtn" class="ghost-button" type="button">Export JSON</button>
-                <button id="importJsonBtn" class="ghost-button" type="button">Import JSON</button>
+                <button id="csvTemplateBtn" class="ghost-button" type="button">CSV Template</button>
+                <button id="settingsExportCsvBtn" class="ghost-button" type="button">Export CSV</button>
                 <button id="importCsvBtn" class="ghost-button" type="button">Import CSV</button>
+                <button id="importSpreadsheetBtn" class="ghost-button" type="button">Import Spreadsheet</button>
                 <button id="exportWorkbookBtn" class="ghost-button" type="button">Export Spreadsheet</button>
                 <button id="backupZipBtn" class="ghost-button" type="button">Backup App Folder</button>
                 <button id="addDemoBtn" class="ghost-button" type="button">Add Demo Data</button>
                 <button id="deleteDemoBtn" class="ghost-button danger" type="button">Delete Demo Data</button>
               </div>
-              <input id="importJsonFile" class="sr-only" type="file" accept="application/json,.json" />
               <input id="importCsvFile" class="sr-only" type="file" accept="text/csv,.csv" />
+              <input id="importSpreadsheetFile" class="sr-only" type="file" accept=".xlsx,.xlsm,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
             </section>
           </div>
         </section>
@@ -755,7 +731,7 @@
               </figure>
               <div>
                 <h2>Settings</h2>
-                <p>Admins can add users, assign roles, edit books, delete books, and manage demo data. Standard users can change appearance, change their own password, and import or export their own data.</p>
+                <p>Admins can add users, assign roles, edit books, delete books, and manage demo data. Standard users can change appearance and import or export their own data.</p>
                 <ul>
                   <li>Admins should keep at least one admin login active.</li>
                   <li>Users cannot see or edit other users' books.</li>
@@ -773,12 +749,12 @@
               </figure>
               <div>
                 <h2>Import & Export</h2>
-                <p>Export JSON for a restorable backup, CSV for transaction review, Spreadsheet for workbook-style reporting, or Backup App Folder for app files plus current data.</p>
+                <p>Use CSV Template to download the section-based import layout, Import CSV to add selected app sections, Import Spreadsheet for the original worksheet format, Export Spreadsheet to return data to that worksheet, or Backup App Folder for app files plus current data.</p>
                 <ul>
-                  <li>JSON is the safest data restore format. Export before importing.</li>
-                  <li>CSV is for spreadsheet review and transaction import, not a full system backup.</li>
-                  <li>Spreadsheet export creates workbook tabs for transactions, accounts, budgets, and recurring items.</li>
-                  <li>Backup App Folder downloads the app files and a JSON state file together.</li>
+                  <li>CSV files can include any mix of accounts, budgets, recurring items, and transactions by using the section column.</li>
+                  <li>Import Spreadsheet reads matching fields from the long-used budget worksheet and adds them to the current book.</li>
+                  <li>Export Spreadsheet keeps the original workbook template, formulas, and formatting where possible.</li>
+                  <li>Backup App Folder downloads the app files, worksheet template, and a JSON state file together.</li>
                 </ul>
               </div>
             </article>
@@ -816,7 +792,7 @@
                   <li>Do not enter a credit card payment as both an expense and a transfer.</li>
                   <li>Set opening balances once, then let transactions change balances.</li>
                   <li>Use transfers for savings moves and card payments.</li>
-                  <li>Export JSON before importing or deleting anything.</li>
+                  <li>Use Backup App Folder before importing or deleting anything important.</li>
                 </ul>
               </div>
             </article>

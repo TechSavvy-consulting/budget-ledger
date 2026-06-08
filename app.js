@@ -27,6 +27,7 @@ const el = {};
   "registerStartDate","registerEndDate","registerThisMonthBtn","statementDate","statementBalance","reconcileStatus","reconcileClearedBalance",
   "reconcileOutstanding","reconcileHelp","userForm","userId","userName","userEmail","userRole","userPassword","userPasswordConfirm","userSubmitLabel","resetUserForm","userCount",
   "userList","bookForm","bookId","bookName","bookSubmitLabel","resetBookForm","bookCount","bookList",
+  "passwordForm","currentPassword","newPassword","newPasswordConfirm","passwordSubmitLabel",
   "themeSelect","exportCsvBtn","settingsExportCsvBtn","csvTemplateBtn","importCsvBtn","importCsvFile","importSpreadsheetBtn","importSpreadsheetFile","exportWorkbookBtn",
   "backupZipBtn","addDemoBtn","deleteDemoBtn","recurringForm","recurringId","recurringName","recurringType","recurringAccount","recurringToAccount",
   "recurringCategory","recurringAmount","recurringCadence","recurringNextDate","recurringSubmitLabel","resetRecurringForm","postDueRecurringBtn","recurringDialog","recurringDialogTitle","closeRecurringDialog",
@@ -94,6 +95,7 @@ function bind() {
   el.resetUserForm.onclick = resetUser;
   el.bookForm.onsubmit = saveBook;
   el.resetBookForm.onclick = resetBook;
+  el.passwordForm.onsubmit = changeOwnPassword;
   el.themeSelect.onchange = () => { record(); state.theme = el.themeSelect.value; document.body.dataset.theme = state.theme; save(); if (syncReady) syncServer(); };
   el.exportCsvBtn.onclick = exportCsv;
   el.settingsExportCsvBtn.onclick = exportCsv;

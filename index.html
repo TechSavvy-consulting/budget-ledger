@@ -551,6 +551,31 @@
 
             <section class="tool-panel">
               <div class="section-heading">
+                <h2>Security</h2>
+              </div>
+              <form id="passwordForm" class="form-grid">
+                <label>
+                  <span>Current Password</span>
+                  <input id="currentPassword" type="password" minlength="8" maxlength="120" autocomplete="current-password" required />
+                </label>
+                <label>
+                  <span>New Password</span>
+                  <input id="newPassword" type="password" minlength="8" maxlength="120" autocomplete="new-password" required />
+                </label>
+                <label>
+                  <span>Confirm New Password</span>
+                  <input id="newPasswordConfirm" type="password" minlength="8" maxlength="120" autocomplete="new-password" required />
+                </label>
+                <div class="form-actions wide">
+                  <button class="primary-button" type="submit">
+                    <span id="passwordSubmitLabel">Change Password</span>
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section class="tool-panel">
+              <div class="section-heading">
                 <h2>Import, Export & Demo Tools</h2>
               </div>
               <div class="button-grid">
@@ -731,9 +756,11 @@
               </figure>
               <div>
                 <h2>Settings</h2>
-                <p>Admins can add users, assign roles, reset passwords, edit books, delete books, and manage demo data. Standard users can change appearance and import or export their own book data.</p>
+                <p>Admins can add users, assign roles, reset passwords, edit books, delete books, and manage demo data. Standard users can change appearance, change their own password, and import or export their own book data.</p>
                 <ul>
                   <li>Fresh installs start with Admin plus Kyle, Jessica, and Ohara user logins, each with a separate budget book.</li>
+                  <li>Use Security to change the password for the account you are currently logged into.</li>
+                  <li>Admins can reset another user's password by editing that user in the Users section.</li>
                   <li>Admins should keep at least one admin login active.</li>
                   <li>Users open only their own book and cannot see or edit other users' books.</li>
                   <li>Use Log Out when sharing a computer.</li>

@@ -797,14 +797,14 @@ function fillWorksheetTemplate(sourceFiles, state = {}) {
   const accounts = Array.isArray(ledger.accounts) ? ledger.accounts : [];
   const transactions = Array.isArray(ledger.transactions) ? ledger.transactions : [];
   const sheets = templateSheets(files);
-  const monthSheets = sheets.filter((sheet) => !/^(aum|to copy worksheets|sheet1)$/i.test(sheet.name)).slice(0, 3);
-  const months = transactionMonths(transactions).slice(0, monthSheets.length || 1);
-  assertWorksheetExportFits(transactions, monthSheets.length);
+  const existingMonthSheets = sheets.filter((sheet) => !/^(aum|to copy worksheets|sheet1)$/i.test(sheet.name));
+  const monthPlans = transactionMonthSheetPlans(transactions);
+  const monthSheets = ensureMonthSheets(files, existingMonthSheets, monthPlans);
 
   if (files["xl/workbook.xml"] && monthSheets.length) {
     let workbook = files["xl/workbook.xml"].toString("utf8");
     monthSheets.forEach((sheet, index) => {
-      const name = monthSheetName(months[index] || months[0]);
+      const name = monthPlans[index]?.name || monthSheetName(monthPlans[0]?.month);
       workbook = renameSheet(workbook, sheet.name, name);
       sheet.name = name;
     });
@@ -812,8 +812,7 @@ function fillWorksheetTemplate(sourceFiles, state = {}) {
   }
 
   monthSheets.forEach((sheet, index) => {
-    const month = months[index] || months[0];
-    const monthTransactions = transactions.filter((t) => monthKey(t.date) === month);
+    const monthTransactions = monthPlans[index]?.transactions || [];
     const xmlText = fillMonthlySheet(files[sheet.path]?.toString("utf8") || "", monthTransactions, accounts);
     files[sheet.path] = Buffer.from(xmlText, "utf8");
   });
@@ -834,19 +833,73 @@ function fillWorksheetTemplate(sourceFiles, state = {}) {
   return files;
 }
 
-function assertWorksheetExportFits(transactions, sheetCount) {
-  if (!sheetCount) return;
-  const months = transactionMonths(transactions);
-  if (months.length > sheetCount) {
-    throw new Error(`The legacy spreadsheet template only has ${sheetCount} month tab(s). Export CSV for full data, or narrow the book to ${sheetCount} month(s) before spreadsheet export.`);
+function ensureMonthSheets(files, monthSheets, monthPlans) {
+  if (!monthSheets.length) return [];
+  const needed = monthPlans.length || 1;
+  const output = monthSheets.slice(0, Math.max(monthSheets.length, needed));
+  const source = monthSheets[monthSheets.length - 1];
+  while (output.length < needed) {
+    const pathName = nextWorksheetPath(files);
+    files[pathName] = Buffer.from(files[source.path]);
+    copyWorksheetRels(files, source.path, pathName);
+    appendWorkbookSheet(files, monthPlans[output.length]?.name || monthSheetName(new Date().toISOString().slice(0, 7)), pathName);
+    addWorksheetContentType(files, pathName);
+    output.push({ name: monthPlans[output.length]?.name || monthSheetName(new Date().toISOString().slice(0, 7)), path: pathName });
   }
-  const maxRowsPerMonth = 92;
-  for (const month of months) {
-    const count = transactions.filter((t) => monthKey(t.date) === month).length;
-    if (count > maxRowsPerMonth) {
-      throw new Error(`The ${monthSheetName(month)} worksheet can hold ${maxRowsPerMonth} transactions, but this book has ${count}. Export CSV for full data.`);
-    }
-  }
+  return output.slice(0, needed);
+}
+
+function nextWorksheetPath(files) {
+  const used = Object.keys(files)
+    .map((name) => name.match(/^xl\/worksheets\/sheet(\d+)\.xml$/i)?.[1])
+    .filter(Boolean)
+    .map(Number);
+  const next = Math.max(0, ...used) + 1;
+  return `xl/worksheets/sheet${next}.xml`;
+}
+
+function copyWorksheetRels(files, sourcePath, targetPath) {
+  const sourceRels = worksheetRelsPath(sourcePath);
+  if (!files[sourceRels]) return;
+  files[worksheetRelsPath(targetPath)] = Buffer.from(files[sourceRels]);
+}
+
+function worksheetRelsPath(sheetPath) {
+  const fileName = path.posix.basename(sheetPath);
+  return `${path.posix.dirname(sheetPath)}/_rels/${fileName}.rels`;
+}
+
+function appendWorkbookSheet(files, name, sheetPath) {
+  if (!files["xl/workbook.xml"] || !files["xl/_rels/workbook.xml.rels"]) return;
+  const workbook = files["xl/workbook.xml"].toString("utf8");
+  const rels = files["xl/_rels/workbook.xml.rels"].toString("utf8");
+  const sheetId = nextWorkbookSheetId(workbook);
+  const relId = nextWorkbookRelId(rels);
+  const target = sheetPath.replace(/^xl\//, "");
+  const sheet = `<sheet name="${xml(name.slice(0, 31))}" sheetId="${sheetId}" r:id="${relId}"/>`;
+  const rel = `<Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${xml(target)}"/>`;
+  files["xl/workbook.xml"] = Buffer.from(workbook.replace("</sheets>", `${sheet}</sheets>`), "utf8");
+  files["xl/_rels/workbook.xml.rels"] = Buffer.from(rels.replace("</Relationships>", `${rel}</Relationships>`), "utf8");
+}
+
+function nextWorkbookSheetId(workbookXmlText) {
+  const ids = [...workbookXmlText.matchAll(/\bsheetId="(\d+)"/g)].map((match) => Number(match[1]));
+  return Math.max(0, ...ids) + 1;
+}
+
+function nextWorkbookRelId(relsXmlText) {
+  const ids = [...relsXmlText.matchAll(/\bId="rId(\d+)"/g)].map((match) => Number(match[1]));
+  return `rId${Math.max(0, ...ids) + 1}`;
+}
+
+function addWorksheetContentType(files, sheetPath) {
+  if (!files["[Content_Types].xml"]) return;
+  const partName = `/${sheetPath}`;
+  let content = files["[Content_Types].xml"].toString("utf8");
+  if (content.includes(`PartName="${partName}"`)) return;
+  const override = `<Override PartName="${xml(partName)}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`;
+  content = content.replace("</Types>", `${override}</Types>`);
+  files["[Content_Types].xml"] = Buffer.from(content, "utf8");
 }
 
 function forceWorkbookRecalc(files) {
@@ -876,6 +929,23 @@ function transactionMonths(transactions) {
   return months.length ? months : [new Date().toISOString().slice(0, 7)];
 }
 
+function transactionMonthSheetPlans(transactions) {
+  const maxRowsPerSheet = 92;
+  return transactionMonths(transactions).flatMap((month) => {
+    const rows = transactions.filter((t) => monthKey(t.date) === month);
+    const chunks = [];
+    const total = Math.max(1, Math.ceil(rows.length / maxRowsPerSheet));
+    for (let index = 0; index < total; index++) {
+      chunks.push({
+        month,
+        name: monthSheetExportName(month, index),
+        transactions: rows.slice(index * maxRowsPerSheet, (index + 1) * maxRowsPerSheet),
+      });
+    }
+    return chunks;
+  });
+}
+
 function monthKey(date) {
   return /^\d{4}-\d{2}/.test(String(date || "")) ? String(date).slice(0, 7) : "";
 }
@@ -884,6 +954,11 @@ function monthSheetName(month) {
   const [year, rawMonth] = String(month || new Date().toISOString().slice(0, 7)).split("-").map(Number);
   const names = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   return `${names[(rawMonth || 1) - 1]} ${year || new Date().getFullYear()}`;
+}
+
+function monthSheetExportName(month, partIndex) {
+  const base = monthSheetName(month);
+  return partIndex ? `${base} ${partIndex + 1}`.slice(0, 31) : base.slice(0, 31);
 }
 
 function renameSheet(workbookXmlText, oldName, newName) {

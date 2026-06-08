@@ -28,7 +28,7 @@ const contentTypes = {
   ".ico": "image/x-icon",
 };
 
-const publicPaths = new Set(["/login", "/login.html", "/login.js", "/styles.css", "/assets/jess-simple-budget-ledger-logo.png"]);
+const publicPaths = new Set(["/login", "/login.html", "/login.js", "/styles.css", "/assets/jess-simple-budget-ledger-logo.png", "/assets/mobile-login-qr.svg"]);
 const sessions = new Map();
 const sessionTtlMs = 1000 * 60 * 60 * 12;
 const sessionCookie = "budget_session";
@@ -491,6 +491,7 @@ async function handleBackupZip(req, res) {
       "render.yaml",
       "README.md",
       "assets/jess-simple-budget-ledger-logo.png",
+      "assets/mobile-login-qr.svg",
     ]) {
       const source = path.join(root, name);
       if (fs.existsSync(source)) files[name] = fs.readFileSync(source);

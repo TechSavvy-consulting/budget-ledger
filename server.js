@@ -157,6 +157,15 @@ function verifyLogin(username, password) {
 }
 
 async function initStorage() {
+  if (process.env.NODE_ENV === "production") {
+    if (!config.authRequired) {
+      throw new Error("Refusing to start in production without authentication enabled.");
+    }
+    if (!databaseUrl) {
+      throw new Error("Refusing to start in production without DATABASE_URL. Financial data must use persistent database storage.");
+    }
+  }
+
   if (databaseUrl) {
     dbPool = new Pool({
       connectionString: databaseUrl,
@@ -250,6 +259,10 @@ function baseHeaders(req, type = "text/plain; charset=utf-8") {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'self'; base-uri 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
   };
 
   if (isSecureRequest(req)) {

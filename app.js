@@ -280,7 +280,15 @@ async function hydrate() {
       saveVersion++;
       syncServer();
     }
-  } catch { syncReady = false; }
+  } catch {
+    syncReady = false;
+    if (currentLogin.username !== "local") {
+      localStorage.removeItem(KEY);
+      state = normalize(base());
+      ensureLoginIdentity();
+      note("Server data could not be loaded. Financial data is hidden until server sync is available.");
+    }
+  }
   document.body.dataset.theme = state.theme;
   syncMonth(state.currentMonth);
   setPeriod(state.periodMode, false);
